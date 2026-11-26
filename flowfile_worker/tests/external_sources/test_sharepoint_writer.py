@@ -48,7 +48,9 @@ def test_overwrite_serializes_actual_rows(format):
         return httpx.Response(201, json={"id": "item"})
 
     with httpx.Client(transport=httpx.MockTransport(graph)) as client:
-        sharepoint_writer.write_file(client, "fixture", source.lazy(), "drive", f"Sales Team/report.{format}", format, "overwrite")
+        sharepoint_writer.write_file(
+            client, "fixture", source.lazy(), "drive", f"Sales Team/report.{format}", format, "overwrite"
+        )
 
 
 @pytest.mark.parametrize("format,mode", [("csv", "overwrite"), ("parquet", "error"), ("xlsx", "update")])

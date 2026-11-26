@@ -1,6 +1,6 @@
 import base64
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs
 
 import httpx
@@ -19,7 +19,7 @@ def test_certificate_token_exchange_uses_signed_client_assertion():
     endpoint = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "SharePoint test")])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     certificate = (
         x509.CertificateBuilder()
         .subject_name(name)

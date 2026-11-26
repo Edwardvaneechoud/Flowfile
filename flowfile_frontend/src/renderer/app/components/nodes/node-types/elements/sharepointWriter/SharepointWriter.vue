@@ -145,8 +145,8 @@
           but embedded images may be lost. This does not append rows.
         </small>
         <small v-else-if="settings.conflict_mode === 'append'">
-          Adds rows below the existing data without repeating headers. Headers must match in the same
-          order. Creates a missing workbook or sheet. Embedded images may be lost when saving.
+          Adds rows below the existing data without repeating headers. Headers must match in the
+          same order. Creates a missing workbook or sheet. Embedded images may be lost when saving.
         </small>
       </el-form-item>
       <el-form-item v-if="settings.conflict_mode === 'append'">

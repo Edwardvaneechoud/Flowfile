@@ -1,4 +1,5 @@
 import json
+from datetime import UTC
 from importlib import import_module
 from types import SimpleNamespace
 
@@ -295,7 +296,7 @@ def test_group_grant_allows_using_saved_sharepoint_connection(saved_connection, 
 
 def test_opening_saved_flow_does_not_grant_sharepoint_data(saved_connection, monkeypatch, tmp_path):
     from contextlib import contextmanager
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from flowfile_core.configs import settings
     from flowfile_core.database.models import ResourceGrant, UserGroup, UserGroupMembership
@@ -389,7 +390,7 @@ def test_opening_saved_flow_does_not_grant_sharepoint_data(saved_connection, mon
             flow_path=str(path),
             user_id=2,
             run_type="scheduled",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
         db.add(scheduled)
         db.commit()
@@ -1640,7 +1641,9 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                 cancelled = []
                 with monkeypatch.context() as patch:
                     patch.setattr(node, "_submit_in_flight", running_job)
-                    patch.setattr(type(graph.execution_context.backend), "cancel", lambda self, job: cancelled.append(job))
+                    patch.setattr(
+                        type(graph.execution_context.backend), "cancel", lambda self, job: cancelled.append(job)
+                    )
                     assert [column.name for column in node.get_predicted_schema(force=True)] == ["sku", "quantity"]
                     node.cancel()
                     assert cancelled == [running_job]

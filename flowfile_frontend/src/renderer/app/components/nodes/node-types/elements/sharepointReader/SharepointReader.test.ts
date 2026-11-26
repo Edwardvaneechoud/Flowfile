@@ -4,7 +4,9 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import SharepointReader from "./SharepointReader.vue";
 
 const post = vi.hoisted(() => vi.fn(async () => ({ data: { id: 1 } as Record<string, unknown> })));
-const get = vi.hoisted(() => vi.fn(async (_url: string) => ({ data: [] as unknown[] })));
+const get = vi.hoisted(() =>
+  vi.fn<(url: string) => Promise<{ data: unknown[] }>>(async () => ({ data: [] as unknown[] })),
+);
 const updateSettings = vi.hoisted(() => vi.fn());
 
 vi.mock("../../../baseNode/genericNodeSettings.vue", () => ({
@@ -47,25 +49,19 @@ function formState(view: ComponentPublicInstance): FormState {
   return (view.$ as typeof view.$ & { setupState: FormState }).setupState;
 }
 
+// These inline components stand in for Element Plus controls in the test.
+/* eslint-disable vue/one-component-per-file */
 function mountReader(manageOnly = false) {
   const app = createApp(SharepointReader, { manageOnly });
-  for (const name of [
-    "dialog",
-    "form",
-    "select",
-    "option",
-    "input",
-    "alert",
-    "switch",
-  ]) {
+  for (const name of ["dialog", "form", "select", "option", "input", "alert", "switch"]) {
     app.component(`el-${name}`, { template: "<div><slot /><slot name='footer' /></div>" });
   }
-  app.component("el-checkbox", {
+  app.component("ElCheckbox", {
     template: `<label><input type="checkbox" @change="$emit('change', $event.target.checked)" /><slot /></label>`,
   });
-  app.component("el-button", { template: "<button><slot /></button>" });
-  app.component("el-form-item", {
-    props: ["label", "error"],
+  app.component("ElButton", { template: "<button><slot /></button>" });
+  app.component("ElFormItem", {
+    props: { label: { type: String, default: "" }, error: { type: String, default: "" } },
     template: "<div :data-label='label'><slot /><span v-if='error'>{{ error }}</span></div>",
   });
   const host = document.createElement("div");
@@ -73,6 +69,7 @@ function mountReader(manageOnly = false) {
   onTestFinished(() => app.unmount());
   return { host, view };
 }
+/* eslint-enable vue/one-component-per-file */
 
 it("shows an error on the invalid field and submits GUIDs without braces", async () => {
   const { host, view } = mountReader();
@@ -134,24 +131,29 @@ it("creates a connection without node settings and loads it in the node drawer",
   expect(drawerForm.selectedConnection).toEqual(saved);
 });
 
-
 it("saves incremental reads with Cache Results off when applied to a cached reader", async () => {
   updateSettings.mockClear();
   get.mockImplementation(async (url) => ({
     data: url === "/sharepoint_connections" ? [{ id: 1, connection_name: "Sales" }] : [],
   }));
   const { host, view } = mountReader();
-  await (view as ComponentPublicInstance & { loadNodeData: (id: number) => Promise<void> }).loadNodeData(1);
+  await (
+    view as ComponentPublicInstance & { loadNodeData: (id: number) => Promise<void> }
+  ).loadNodeData(1);
   const form = formState(view);
   form.selectedConnectionId = 1;
   Object.assign(form.settings, { drive_id: "drive", file_path: "sales.csv", cache_results: true });
   await nextTick();
 
-  const incremental = host.querySelector<HTMLInputElement>('[data-label="Incremental read"] input')!;
+  const incremental = host.querySelector<HTMLInputElement>(
+    '[data-label="Incremental read"] input',
+  )!;
   incremental.checked = true;
   incremental.dispatchEvent(new Event("change"));
   expect(form.settings.cache_results).toBe(true);
-  const apply = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Apply")!;
+  const apply = Array.from(host.querySelectorAll("button")).find(
+    (button) => button.textContent === "Apply",
+  )!;
   apply.click();
 
   await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));

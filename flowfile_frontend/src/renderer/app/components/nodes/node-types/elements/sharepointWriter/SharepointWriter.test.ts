@@ -8,28 +8,43 @@ vi.mock("../../../baseNode/genericNodeSettings.vue", () => ({
   default: { template: "<div><slot /></div>" },
 }));
 vi.mock("../../../../../stores/node-store", () => ({
-  useNodeStore: () => ({ getNodeData: async () => ({ setting_input: {
-    is_setup: true, connection_id: 1, drive_id: "drive", file_path: "old/report.xlsx",
-    format: "xlsx", sheet_name: "Sales", conflict_mode: "overwrite",
-  } }) }),
+  useNodeStore: () => ({
+    getNodeData: async () => ({
+      setting_input: {
+        is_setup: true,
+        connection_id: 1,
+        drive_id: "drive",
+        file_path: "old/report.xlsx",
+        format: "xlsx",
+        sheet_name: "Sales",
+        conflict_mode: "overwrite",
+      },
+    }),
+  }),
 }));
 vi.mock("../../../../../services/axios.config", () => ({
-  default: { get: async (url: string) => ({ data: url.endsWith("browse_defaults")
-    ? { site_url: null } : [{ id: 1, auth_method: "client_secret" }] }) },
+  default: {
+    get: async (url: string) => ({
+      data: url.endsWith("browse_defaults")
+        ? { site_url: null }
+        : [{ id: 1, auth_method: "client_secret" }],
+    }),
+  },
 }));
 vi.mock("../../../../../composables/useNodeSettings", () => ({
-  useNodeSettings: (options: any) => ({ saveSettings: () => {
-    if (!options.onBeforeSave()) return false;
-    send(options.toSavePayload?.(options.nodeRef.value) ?? { ...options.nodeRef.value });
-    return true;
-  } }),
+  useNodeSettings: (options: any) => ({
+    saveSettings: () => {
+      if (!options.onBeforeSave()) return false;
+      send(options.toSavePayload?.(options.nodeRef.value) ?? { ...options.nodeRef.value });
+      return true;
+    },
+  }),
 }));
 
 // Vue exposes unwrapped setup bindings internally, but omits them from its public types.
 type FormState = {
   listMode: boolean;
-  listTarget: { site_id: string;
-  list_id: string };
+  listTarget: { site_id: string; list_id: string };
   mapping: string;
   folders: { name: string }[];
   useFolder: () => void;
@@ -64,7 +79,10 @@ it("keeps the file format and filename after applying a list target", async () =
   await nextTick();
   expect(view.saveSettings()).toBe(true);
   expect(send.mock.lastCall?.[0]).toMatchObject({
-    file_path: "new/report.xlsx", format: "xlsx", sheet_name: "Sales",
-    list_target: null, conflict_mode: "overwrite",
+    file_path: "new/report.xlsx",
+    format: "xlsx",
+    sheet_name: "Sales",
+    list_target: null,
+    conflict_mode: "overwrite",
   });
 });

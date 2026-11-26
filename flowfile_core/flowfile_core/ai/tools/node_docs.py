@@ -1205,7 +1205,8 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "Select a saved SharePoint connection, then choose a document-library file or a SharePoint list. "
         "For files, use * or ? in the path to match multiple files. Set the CSV delimiter if needed. "
         "For XLSX or XLS, optionally enter a sheet name (defaults to the first sheet). "
-        "Enable incremental reads only for a single CSV, JSON, or Parquet file without wildcards."
+        "Enable incremental reads only for a single CSV, JSON, or Parquet file without wildcards. "
+        "Turn off Cache Results (`cache_results: false`) when incremental reads are enabled."
     ),
     "sharepoint_writer": (
         "Select a saved SharePoint connection. For a document library, choose an output path, format "
