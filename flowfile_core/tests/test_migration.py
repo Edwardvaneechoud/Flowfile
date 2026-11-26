@@ -136,10 +136,17 @@ class TestFreshInstall:
         db_path = tmp_path / "fresh.db"
         _run_migration(db_path, monkeypatch)
 
+        import glosslayer.schema
+
         from flowfile_core.database.models import Base
 
+        # The semantic ledger (migration 046) is glosslayer's schema, so its tables have no models here.
+        ledger_tables = {t for t in _get_tables(db_path) if glosslayer.schema.is_gloss_table(t)}
+        assert set(glosslayer.schema.metadata().tables) <= ledger_tables
+
         model_tables = set(Base.metadata.tables.keys())
-        db_tables = set(_get_tables(db_path)) - {"alembic_version"}
+        assert not model_tables & ledger_tables
+        db_tables = set(_get_tables(db_path)) - {"alembic_version"} - ledger_tables
         assert model_tables == db_tables
 
 

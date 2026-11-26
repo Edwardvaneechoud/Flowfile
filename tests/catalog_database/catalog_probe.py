@@ -120,6 +120,19 @@ with engine.connect() as conn:
     assert (
         MigrationContext.configure(conn).get_current_revision() == ScriptDirectory.from_config(cfg).get_current_head()
     )
+
+
+def gloss_tables() -> list[str]:
+    return sorted(n for n in inspect(engine).get_table_names() if n.startswith("gloss_"))
+
+
+# Migration 046 is the semantic ledger's one writer: glosslayer's tables come and go with it.
+ledger = gloss_tables()
+assert {"gloss_assertions", "gloss_events", "gloss_meta", "gloss_assets"} <= set(ledger), ledger
+command.downgrade(cfg, "045")
+assert gloss_tables() == []
+command.upgrade(cfg, "head")
+assert gloss_tables() == ledger
 with Session(engine) as db:
     admin = db.query(models.User).filter_by(username="catalog_admin").one()
     assert admin.is_admin

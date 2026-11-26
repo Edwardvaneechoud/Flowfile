@@ -8,7 +8,12 @@ min and max; one raw query for the first ten rows; one distinct-values query for
 up to eight text columns with twenty or fewer distinct values. Core collects nothing.
 
 Every value is masked with ``safety.scrub_text_regex`` and cut to 40 characters before it
-is kept. The profile is cached in process for five minutes per user and table version
+is kept. A column the semantic ledger keeps from AI (``catalog/semantic/confidentiality.py``:
+confidential or restricted, accepted or proposed) is read for none of them and shown by name,
+type and role only; when the ledger cannot be read every column is, and the cache key holds
+the kept names, so a raised level is a new profile.
+
+The profile is cached in process for five minutes per user and table version
 (the Delta version of a local table, else its ``updated_at`` and sources), and is built
 under a time budget: past it, or on any failure, the caller gets what was finished
 (names and types, roles when the fields call answered) with ``problem`` saying why. A
@@ -95,6 +100,7 @@ class ColumnProfile:
     examples: tuple[Any, ...] = ()
     values: tuple[Any, ...] | None = None
     values_exact: bool = False
+    private: bool = False
 
 
 @dataclass
@@ -108,6 +114,8 @@ class TableProfile:
     complete: bool = False
     problem: str | None = None
     values_withheld: bool = False
+    private_columns: tuple[str, ...] = ()
+    private_reason: Literal["columns", "table", "unreadable"] | None = None
 
     def column_infos(self) -> list[ColumnInfo]:
         """The columns as the chart request checks see them."""
@@ -141,6 +149,44 @@ def _base_profile(table: Any) -> TableProfile:
         ColumnProfile(name=c.name, dtype=c.dtype, type=type_class(c.dtype)) for c in (table.schema_columns or [])
     ]
     return TableProfile(table_id=table.id, table_name=table.name, columns=columns)
+
+
+def private_columns(table: Any) -> tuple[tuple[str, ...], Literal["columns", "table", "unreadable"] | None]:
+    """The table's columns kept from AI, and why: some ``columns``, the whole ``table``, or an ``unreadable`` ledger."""
+    from flowfile_core.catalog.semantic.confidentiality import Withheld, read_withheld
+    from flowfile_core.database.connection import get_db_context
+
+    try:
+        with get_db_context() as db:
+            withheld = read_withheld(db, [table.id])
+    except Exception:  # noqa: BLE001
+        logger.warning("confidentiality of table %s could not be read", table.id, exc_info=True)
+        withheld = Withheld(unreadable=frozenset([table.id]))
+    names = tuple(withheld.names(table.id, [c.name for c in (table.schema_columns or [])]))
+    if withheld.whole_table(table.id):
+        return names, "unreadable" if table.id in withheld.unreadable else "table"
+    return names, "columns" if names else None
+
+
+def private_warning(profile: TableProfile) -> str | None:
+    """The warning a response carries when columns of ``profile`` were kept from AI, else None."""
+    if profile.private_reason == "unreadable":
+        return (
+            "The confidentiality of this table could not be read from its semantic model, "
+            "so the model saw column names and types only."
+        )
+    if profile.private_reason == "table":
+        return "This table is marked confidential, so the model saw column names and types only."
+    if profile.private_columns:
+        names = ", ".join(f'"{n}"' for n in profile.private_columns)
+        return f"Kept from AI (confidential): {names}; the model saw their names and types only."
+    return None
+
+
+def _mark_private(profile: TableProfile, names: tuple[str, ...], reason: Any) -> None:
+    kept = set(names)
+    profile.private_columns, profile.private_reason = names, reason
+    profile.columns = [replace(c, private=True) if c.name in kept else c for c in profile.columns]
 
 
 def cache_key(table: Any, user_id: int | None, share_values: bool = True) -> tuple:
@@ -214,7 +260,7 @@ def stats_payload(columns: list[ColumnProfile]) -> dict:
     """One aggregate over the whole table: row count, then per column non-null, distinct, min, max."""
     measures: list[dict] = [{"field": "*", "agg": "count", "asFieldKey": "__rows"}]
     for i, col in enumerate(columns):
-        if col.type not in _AGGREGATABLE:
+        if col.type not in _AGGREGATABLE or col.private:
             continue
         measures.append({"field": col.name, "agg": "count", "asFieldKey": f"c{i}_nonnull"})
         measures.append({"field": col.name, "agg": "distinctCount", "asFieldKey": f"c{i}_distinct"})
@@ -225,7 +271,7 @@ def stats_payload(columns: list[ColumnProfile]) -> dict:
 
 
 def rows_payload(columns: list[ColumnProfile]) -> dict:
-    fields = [c.name for c in columns if c.type in _AGGREGATABLE]
+    fields = [c.name for c in columns if c.type in _AGGREGATABLE and not c.private]
     return {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": fields}]}], "limit": EXAMPLE_ROWS}
 
 
@@ -270,7 +316,7 @@ def _fill(table: Any, user: Any, into: TableProfile, share_values: bool = True) 
         [row] = _rows(service, source, stats_payload(into.columns), 1, user_id) or [{}]
         with_stats = []
         for i, col in enumerate(into.columns):
-            if col.type not in _AGGREGATABLE:
+            if col.type not in _AGGREGATABLE or col.private:
                 with_stats.append(col)
                 continue
             with_stats.append(
@@ -289,7 +335,7 @@ def _fill(table: Any, user: Any, into: TableProfile, share_values: bool = True) 
         with_examples = []
         for col in into.columns:
             seen: list[Any] = []
-            for r in first_rows:
+            for r in first_rows if not col.private else ():
                 shown = _shown(r.get(col.name))
                 if shown is not None and shown not in seen:
                     seen.append(shown)
@@ -301,7 +347,7 @@ def _fill(table: Any, user: Any, into: TableProfile, share_values: bool = True) 
         listed = [
             c
             for c in into.columns
-            if c.type == "string" and c.distinct is not None and c.distinct <= VALUE_LIST_MAX_DISTINCT
+            if c.type == "string" and not c.private and c.distinct is not None and c.distinct <= VALUE_LIST_MAX_DISTINCT
         ][:VALUE_LIST_COLUMNS]
         value_lists: dict[str, tuple[tuple[Any, ...], bool]] = {}
         for col in listed:
@@ -328,6 +374,8 @@ async def profile_table(
     """The profile of ``table`` (a ``CatalogTableOut`` the caller may read) for ``user``.
 
     ``share_values=False`` reads the roles only: no row count, statistics, examples or values.
+    Columns kept from AI (``private_columns``) are never read; a table kept whole, or whose
+    confidentiality cannot be read, is profiled as with ``share_values=False``.
 
     Never raises: past ``budget`` seconds or on a failure the result holds what was finished
     and ``problem`` says why.
@@ -338,15 +386,20 @@ async def profile_table(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + budget
 
+    def keyed() -> tuple:
+        names, reason = private_columns(table)
+        _mark_private(holder, names, reason)
+        if reason in ("table", "unreadable"):
+            holder.values_withheld = True
+        return (*cache_key(table, user_id, share_values), names, reason)
+
     def work(key: tuple) -> TableProfile:
-        _fill(table, user, holder, share_values)
+        _fill(table, user, holder, share_values and not holder.values_withheld)
         _cache_put(key, holder)
         return holder
 
     try:
-        key = await asyncio.wait_for(
-            loop.run_in_executor(_executor, cache_key, table, user_id, share_values), timeout=budget
-        )
+        key = await asyncio.wait_for(loop.run_in_executor(_executor, keyed), timeout=budget)
         cached = _cache_get(key)
         if cached is not None:
             return cached
@@ -383,6 +436,8 @@ def render_profile(profile: TableProfile) -> str:
         lines.append(
             "Statistics and example values are not available for this table; use the column names and types below."
         )
+    if profile.private_columns and profile.private_reason == "columns":
+        lines.append("Columns marked kept private are confidential: their values are not shared; use them by name.")
     lines.append("Columns (name: type, role; profile):")
     for col in profile.columns:
         if col.type == "other":
@@ -391,6 +446,9 @@ def render_profile(profile: TableProfile) -> str:
         head = f"- {_literal(col.name)}: {col.type}"
         if col.role:
             head += f", {col.role}"
+        if col.private:
+            lines.append(head + "; kept private: name and type only, no values")
+            continue
         parts: list[str] = []
         counts = [
             f"{n} {label}" for n, label in ((col.non_null, "non-null"), (col.distinct, "distinct")) if n is not None
@@ -414,6 +472,8 @@ __all__ = [
     "TableProfile",
     "cache_key",
     "clear_cache",
+    "private_columns",
+    "private_warning",
     "profile_table",
     "render_profile",
     "rows_payload",

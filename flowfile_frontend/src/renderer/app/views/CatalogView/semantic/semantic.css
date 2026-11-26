@@ -1,0 +1,137 @@
+/* Classes the semantic-model components share; each imports this file scoped. */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+}
+
+.box {
+  padding: var(--spacing-3) var(--spacing-4);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+}
+
+.form-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  padding: var(--spacing-4);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.input-row {
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+.grow {
+  flex: 1;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-4);
+}
+
+.hint,
+.note,
+.error {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.note {
+  font-size: var(--font-size-xs);
+}
+
+.error {
+  color: var(--color-danger);
+}
+
+.warn {
+  color: var(--color-warning-dark);
+}
+
+.warn-bar {
+  padding-left: var(--spacing-3);
+  border-left: 3px solid var(--color-warning-dark);
+  color: var(--color-warning-dark);
+}
+
+.group-title {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.name {
+  font-weight: var(--font-weight-semibold);
+}
+
+.icon-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  color: var(--color-primary);
+}
+
+.icon-btn-danger:hover {
+  color: var(--color-danger);
+}
+
+.open-table-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  vertical-align: middle;
+}
+
+.open-table-btn:hover {
+  background: var(--color-background-tertiary);
+  color: var(--color-primary);
+}
+
+.code {
+  margin: 0;
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-secondary);
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

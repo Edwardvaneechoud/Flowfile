@@ -325,6 +325,16 @@ for _pkg in ('tokenizers', 'tiktoken'):
         print(f"WARN: could not copy metadata {{_pkg}}: {{_e}}")
 ai_hiddenimports += ['tiktoken_ext', 'tiktoken_ext.openai_public']
 
+# glosslayer ships the Ossie JSON schema as package data and is imported lazily by the catalog.
+gloss_hiddenimports = []
+gloss_datas = []
+for _pkg in ('glosslayer', 'glosslayer_flowfile'):
+    try:
+        gloss_hiddenimports += collect_submodules(_pkg)
+        gloss_datas += collect_data_files(_pkg)
+    except Exception as _e:
+        print(f"WARN: could not collect {{_pkg}}: {{_e}}")
+
 collected_hiddenimports = []
 for _pkg in {list(collected_packages)!r}:
     collected_hiddenimports += collect_submodules(_pkg)
@@ -349,9 +359,10 @@ a = Analysis(
     datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas
     + code_generator_datas + demo_flows_datas + standard_icons_datas
     + kernel_manifest_datas + share_manifest_datas + plugin_datas + handshake_metadata_datas
-    + litellm_datas + ai_datas + driver_datas,
+    + litellm_datas + ai_datas + driver_datas + gloss_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
-    + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + driver_hiddenimports + [
+    + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + driver_hiddenimports
+    + gloss_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',
         'numpy.core._methods',

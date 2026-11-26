@@ -171,6 +171,7 @@ nav:
     - Slowly Changing Dimensions: users/visual-editor/catalog/slowly-changing-dimensions.md
     - Change Tracking: users/visual-editor/catalog/change-tracking.md
     - SQL Editor: users/visual-editor/catalog/sql-editor.md
+    - Semantic Models: users/visual-editor/catalog/semantic-models.md
     - Notebooks: users/visual-editor/catalog/notebooks.md
     - Visualizations: users/visual-editor/catalog/visualizations.md
     - Schedules: users/visual-editor/catalog/schedules.md

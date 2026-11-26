@@ -12,10 +12,20 @@
     <!-- Models: pick the provider + model AI features run on. Optionally
          give a task (charts, dashboards, schedules, settings) its own model. -->
     <div class="card mb-3">
-      <div class="card-header">
+      <button
+        type="button"
+        class="card-header card-toggle"
+        :aria-expanded="isOpen('card-models')"
+        data-testid="ai-card-toggle-card-models"
+        @click="toggleGroup('card-models')"
+      >
+        <i
+          class="fa-solid card-toggle__caret"
+          :class="isOpen('card-models') ? 'fa-chevron-down' : 'fa-chevron-right'"
+        ></i>
         <h3 class="card-title">Models</h3>
-      </div>
-      <div class="card-content">
+      </button>
+      <div v-show="isOpen('card-models')" class="card-content">
         <div v-if="!aiStore.hasConfiguredProvider" class="info-box">
           <i class="fa-solid fa-circle-info"></i>
           <div class="info-body">
@@ -33,12 +43,12 @@
         </div>
 
         <template v-else>
+          <span class="option-group__label">Main model</span>
           <p class="hint-text models-intro">
-            The chat drawer's model switcher changes this same selection — it is a shortcut, not a
-            separate setting.
+            Used by the assistant on the canvas and by every task below that has no model of its
+            own. The chat drawer's model switcher changes this same selection.
           </p>
 
-          <!-- Main selection — drives everything unless a split is enabled. -->
           <div class="model-row">
             <div class="model-field">
               <label class="model-field__label" for="ai-main-provider"> Provider </label>
@@ -94,69 +104,119 @@
               </el-select>
             </div>
           </div>
-          <p class="model-tier__hint">
-            Used by every AI feature, unless a task below has a model of its own.
+          <span class="option-group__label option-group__label--spaced">Models per task</span>
+          <p class="hint-text models-intro">
+            A task on "Same as main" follows the main model. Give it a provider to use another.
           </p>
 
-          <template v-for="task in TASK_MODELS" :key="task.surface">
-            <div class="model-row model-row--simple">
-              <div class="model-field">
-                <label class="model-field__label" :for="`ai-task-provider-${task.surface}`">
-                  {{ task.label }} provider
-                </label>
-                <el-select
-                  :id="`ai-task-provider-${task.surface}`"
-                  size="default"
-                  placeholder="Same as main"
-                  popper-class="model-select-dropdown"
-                  :model-value="aiStore.surfaceModels[task.surface]?.provider ?? ''"
-                  @change="(value: string) => onTaskProviderChange(task.surface, value)"
-                >
-                  <el-option value="" label="Same as main" />
-                  <el-option
-                    v-for="opt in providerOptions"
-                    :key="opt.value"
-                    :value="opt.value"
-                    :label="opt.label"
-                    :disabled="opt.disabled"
-                  />
-                </el-select>
-                <p
-                  v-if="isUnconfigured(aiStore.surfaceModels[task.surface]?.provider ?? null)"
-                  class="model-field__sub model-field__sub--warn"
-                >
-                  <i class="fa-solid fa-triangle-exclamation"></i>
-                  This provider has no API key, so these calls will fail.
-                </p>
-              </div>
-              <div v-if="aiStore.surfaceModels[task.surface]" class="model-field">
-                <label class="model-field__label" :for="`ai-task-model-${task.surface}`">
-                  Model
-                </label>
-                <el-select
-                  :id="`ai-task-model-${task.surface}`"
-                  size="default"
-                  placeholder="Provider default"
-                  popper-class="model-select-dropdown"
-                  :model-value="aiStore.surfaceModels[task.surface].model ?? ''"
-                  @change="(value: string) => onTaskModelChange(task.surface, value)"
-                >
-                  <el-option value="" label="Provider default" />
-                  <el-option v-for="m in taskModels(task.surface)" :key="m" :value="m" :label="m" />
-                </el-select>
-              </div>
+          <div class="task-table" role="table" aria-label="Models per task">
+            <div class="task-row task-row--head" role="row">
+              <span role="columnheader">Task</span>
+              <span role="columnheader">Provider</span>
+              <span role="columnheader">Model</span>
             </div>
-            <p class="model-tier__hint">{{ task.hint }}</p>
-          </template>
+            <template v-for="group in TASK_GROUPS" :key="group.key">
+              <div class="task-group" role="row">
+                <button
+                  type="button"
+                  class="task-group__toggle"
+                  role="cell"
+                  :aria-expanded="isOpen(group.key)"
+                  :data-testid="`ai-task-group-${group.key}`"
+                  @click="toggleGroup(group.key)"
+                >
+                  <i
+                    class="fa-solid task-group__caret"
+                    :class="isOpen(group.key) ? 'fa-chevron-down' : 'fa-chevron-right'"
+                  ></i>
+                  <span>{{ group.name }}</span>
+                  <span v-if="!isOpen(group.key)" class="task-group__summary">
+                    {{ groupSummary(group) }}
+                  </span>
+                </button>
+              </div>
+              <div
+                v-for="task in group.tasks"
+                v-show="isOpen(group.key)"
+                :key="task.surface"
+                class="task-row"
+                role="row"
+                :data-testid="`ai-task-row-${task.surface}`"
+              >
+                <div class="task-name" role="cell">
+                  <span class="task-name__label">{{ task.label }}</span>
+                  <span class="task-name__hint">{{ task.hint }}</span>
+                </div>
+                <div class="model-field" role="cell">
+                  <el-select
+                    :id="`ai-task-provider-${task.surface}`"
+                    size="default"
+                    placeholder="Same as main"
+                    popper-class="model-select-dropdown"
+                    :aria-label="`${group.name}, ${task.label}: provider`"
+                    :model-value="ownPick(task.surface)?.provider ?? ''"
+                    @change="(value: string) => setTaskProvider(task.surface, value)"
+                  >
+                    <el-option value="" label="Same as main" />
+                    <el-option
+                      v-for="opt in providerOptions"
+                      :key="opt.value"
+                      :value="opt.value"
+                      :label="opt.label"
+                      :disabled="opt.disabled"
+                    />
+                  </el-select>
+                  <p
+                    v-if="isUnconfigured(ownPick(task.surface)?.provider ?? null)"
+                    class="model-field__sub model-field__sub--warn"
+                  >
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    This provider has no API key, so these calls will fail.
+                  </p>
+                </div>
+                <div class="model-field" role="cell">
+                  <el-select
+                    v-if="ownPick(task.surface)"
+                    :id="`ai-task-model-${task.surface}`"
+                    size="default"
+                    placeholder="Provider default"
+                    popper-class="model-select-dropdown"
+                    :aria-label="`${group.name}, ${task.label}: model`"
+                    :model-value="ownPick(task.surface)?.model ?? ''"
+                    @change="(value: string) => setTaskModel(task.surface, value)"
+                  >
+                    <el-option value="" label="Provider default" />
+                    <el-option
+                      v-for="m in taskModels(task.surface)"
+                      :key="m"
+                      :value="m"
+                      :label="m"
+                    />
+                  </el-select>
+                  <span v-else class="task-follows">{{ mainModelText }}</span>
+                </div>
+              </div>
+            </template>
+          </div>
         </template>
       </div>
     </div>
 
     <div class="card mb-3" data-testid="ai-data-sharing">
-      <div class="card-header">
+      <button
+        type="button"
+        class="card-header card-toggle"
+        :aria-expanded="isOpen('card-data')"
+        data-testid="ai-card-toggle-card-data"
+        @click="toggleGroup('card-data')"
+      >
+        <i
+          class="fa-solid card-toggle__caret"
+          :class="isOpen('card-data') ? 'fa-chevron-down' : 'fa-chevron-right'"
+        ></i>
         <h3 class="card-title">Data sent to the AI</h3>
-      </div>
-      <div class="card-content">
+      </button>
+      <div v-show="isOpen('card-data')" class="card-content">
         <p class="hint-text models-intro">
           The AI always gets names: the table, its columns and their types, plus your prompt. With
           this on it also gets data values: row counts, summary statistics and some of the values,
@@ -187,19 +247,28 @@
       </div>
     </div>
 
-    <!-- Simple build output. Applies to every provider; the on-device model is
-         the one that gains most from the code form. -->
-    <div class="card mb-3">
-      <div class="card-header">
-        <h3 class="card-title">Simple build</h3>
-      </div>
-      <div class="card-content">
+    <!-- How the chat drawer builds flows: Simple build's output and the agent's behaviour. -->
+    <div class="card mb-3" data-testid="ai-flow-building">
+      <button
+        type="button"
+        class="card-header card-toggle"
+        :aria-expanded="isOpen('card-flows')"
+        data-testid="ai-card-toggle-card-flows"
+        @click="toggleGroup('card-flows')"
+      >
+        <i
+          class="fa-solid card-toggle__caret"
+          :class="isOpen('card-flows') ? 'fa-chevron-down' : 'fa-chevron-right'"
+        ></i>
+        <h3 class="card-title">Building flows</h3>
+      </button>
+      <div v-show="isOpen('card-flows')" class="card-content">
+        <h4 class="block-title">Simple build</h4>
         <p class="hint-text models-intro">
           What the model writes when the chat drawer's Simple build generates a flow from one
           message. Flowfile turns either form into nodes for you to add to the canvas; nothing the
           model writes is executed.
         </p>
-        <span class="option-group__label">Output</span>
         <div class="option-list">
           <label v-for="output in SIMPLE_BUILD_OUTPUTS" :key="output.value" class="option">
             <input
@@ -215,16 +284,10 @@
             </span>
           </label>
         </div>
-      </div>
-    </div>
 
-    <!-- Agent behaviour. Used whenever Send dispatches an agent run (Auto-agent
-         or Agent mode), including auto-promotion from chat. -->
-    <div class="card mb-3">
-      <div class="card-header">
-        <h3 class="card-title">Agent</h3>
-      </div>
-      <div class="card-content">
+        <!-- Agent behaviour. Used whenever Send dispatches an agent run (Auto-agent
+             or Agent mode), including auto-promotion from chat. -->
+        <h4 class="block-title block-title--spaced">Agent</h4>
         <p class="hint-text models-intro">
           How the agent plans and executes changes when a message runs as an agent (Auto-agent or
           Agent mode in the chat drawer).
@@ -296,7 +359,9 @@ import type {
   PersistedAgentSurface,
   PersistedSimpleBuildOutput,
 } from "../../stores/ai-store-persistence";
-import { LOCAL_PROVIDER_ID, LOCAL_PROVIDER_LABEL } from "./localModelApi";
+import { useSectionToggle } from "../../components/common/CollapsibleSection/useSectionToggle";
+import { useTaskModels, withSelected } from "../../composables/useTaskModels";
+import { LOCAL_PROVIDER_ID } from "./localModelApi";
 
 const emit = defineEmits<{
   (e: "navigate", tab: string): void;
@@ -348,13 +413,18 @@ const AGENT_VARIANTS: ReadonlyArray<{
   },
 ];
 
-// Keep the currently-selected model as a valid <option> even if it isn't in
-// the provider's curated list (so the select never renders blank).
-const _withSelected = (list: string[], selected: string | null): string[] =>
-  selected && !list.includes(selected) ? [...list, selected] : list;
+const {
+  providerLabel,
+  providerOptions,
+  isUnconfigured,
+  ownPick,
+  taskModels,
+  setTaskProvider,
+  setTaskModel,
+} = useTaskModels();
 
 const mainModels = computed(() =>
-  _withSelected(aiStore.modelsForProvider(aiStore.selectedProvider), aiStore.selectedModel),
+  withSelected(aiStore.modelsForProvider(aiStore.selectedProvider), aiStore.selectedModel),
 );
 
 // When a tier's provider is On-device AI, its model isn't a separate pick — it's
@@ -363,31 +433,6 @@ const isLocalComplex = computed(() => aiStore.selectedProvider === LOCAL_PROVIDE
 const localActiveModelName = computed(
   () => aiStore.localModelStatus?.modelName ?? "the on-device model",
 );
-// Humanize the synthetic ``local`` provider's label (wire id stays "local").
-const providerLabel = (name: string): string =>
-  name === LOCAL_PROVIDER_ID ? LOCAL_PROVIDER_LABEL : name;
-
-// Every provider is listed so the user can see what exists, not just what
-// already has a key; unconfigured ones are greyed out (they would fail at
-// call time) and the hint below the select points at the Providers tab.
-const providerOptions = computed(() =>
-  aiStore.providers.map((p) => ({
-    value: p.provider,
-    label:
-      p.status === "unconfigured"
-        ? `${providerLabel(p.provider)} (not configured)`
-        : p.status === "env_fallback"
-          ? `${providerLabel(p.provider)} (env key)`
-          : providerLabel(p.provider),
-    disabled: p.status === "unconfigured",
-  })),
-);
-
-// A persisted selection can point at a provider whose key was since removed
-// (or never existed on this install); warn instead of silently failing later.
-const isUnconfigured = (name: string | null): boolean =>
-  name !== null &&
-  aiStore.providers.some((p) => p.provider === name && p.status === "unconfigured");
 const mainProviderUnconfigured = computed(() => isUnconfigured(aiStore.selectedProvider));
 
 const onMainProviderChange = (value: string): void => {
@@ -398,35 +443,83 @@ const onMainModelChange = (value: string): void => {
   aiStore.setSelectedModel(value || null);
 };
 
-// Tasks that can run on their own model; `surface` is the name passed to `resolveSurface`.
-const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string }> = [
-  { surface: "chart", label: "Charts", hint: "Used when you ask the AI for a chart." },
+interface TaskModel {
+  surface: string;
+  label: string;
+  hint: string;
+}
+
+// Tasks that can run on their own model, by where they are used; `surface` goes to `resolveSurface`.
+interface TaskGroup {
+  key: string;
+  name: string;
+  tasks: ReadonlyArray<TaskModel>;
+}
+
+const TASK_GROUPS: ReadonlyArray<TaskGroup> = [
   {
-    surface: "dashboard",
-    label: "Dashboards",
-    hint: "Plans and writes a dashboard page; each chart on it is built by the Charts model.",
+    key: "flows",
+    name: "Flows",
+    tasks: [
+      {
+        surface: "settings_autocomplete",
+        label: "Node settings",
+        hint: "Suggestions inside a node's settings, such as join keys.",
+      },
+      { surface: "cron", label: "Schedules", hint: "Turns a schedule in words into cron." },
+    ],
   },
-  { surface: "cron", label: "Schedules", hint: "Used to turn a schedule in words into cron." },
   {
-    surface: "settings_autocomplete",
-    label: "Settings suggestions",
-    hint: "Used for suggestions inside node settings, such as join keys.",
+    key: "semantic",
+    name: "Semantic models",
+    tasks: [
+      {
+        surface: "semantic_ask",
+        label: "Questions",
+        hint: "Answers a question about your data by picking an approved metric.",
+      },
+      {
+        surface: "semantic_suggest",
+        label: "Suggestions",
+        hint: "Writes descriptions and proposes metrics, joins and column roles.",
+      },
+    ],
+  },
+  {
+    key: "dashboards",
+    name: "Dashboards",
+    tasks: [
+      { surface: "chart", label: "Charts", hint: "Builds a chart from a description." },
+      {
+        surface: "dashboard",
+        label: "Dashboard pages",
+        hint: "Plans and writes a page; each chart on it is built by the Charts model.",
+      },
+    ],
   },
 ];
 
-const taskModels = (surface: string): string[] => {
-  const pick = aiStore.surfaceModels[surface];
-  return _withSelected(aiStore.modelsForProvider(pick?.provider ?? null), pick?.model ?? null);
+// Open or folded per card and per task group, remembered in this browser.
+const SECTION_KEYS = ["card-models", "card-data", "card-flows", ...TASK_GROUPS.map((g) => g.key)];
+const groupToggles = new Map(
+  SECTION_KEYS.map((key) => [key, useSectionToggle(`ai-assistant.${key}`, true)]),
+);
+const isOpen = (key: string): boolean => groupToggles.get(key)?.open.value ?? true;
+const toggleGroup = (key: string): void => groupToggles.get(key)?.toggle();
+
+/** A folded group in a few words: how many of its tasks have a model of their own. */
+const groupSummary = (group: TaskGroup): string => {
+  const own = group.tasks.filter((t) => ownPick(t.surface)).length;
+  if (own === 0) return "Same as main";
+  return own === group.tasks.length ? "Own models" : `${own} of ${group.tasks.length} on own model`;
 };
 
-const onTaskProviderChange = (surface: string, value: string): void => {
-  aiStore.setSurfaceModel(surface, value ? { provider: value, model: null } : null);
-};
-
-const onTaskModelChange = (surface: string, value: string): void => {
-  const pick = aiStore.surfaceModels[surface];
-  if (pick) aiStore.setSurfaceModel(surface, { provider: pick.provider, model: value || null });
-};
+/** What a task on "Same as main" runs on, shown in its Model column. */
+const mainModelText = computed(() => {
+  const provider = providerLabel(aiStore.selectedProvider ?? "");
+  const model = isLocalComplex.value ? localActiveModelName.value : aiStore.selectedModel;
+  return model ? `${provider} · ${model}` : provider;
+});
 
 const onVerifyChange = (event: Event): void => {
   aiStore.setVerifyPlanCompletion((event.target as HTMLInputElement).checked);
@@ -445,8 +538,144 @@ const onVerifyChange = (event: Event): void => {
   flex-wrap: wrap;
 }
 
-.model-row--simple {
-  margin-top: var(--spacing-4);
+.card-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--spacing-2);
+  width: 100%;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-toggle .card-title {
+  margin: 0;
+}
+
+.card-toggle[aria-expanded="false"] {
+  border-bottom: none;
+}
+
+.card-toggle__caret {
+  width: 12px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.block-title {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.block-title--spaced {
+  margin-top: var(--spacing-5);
+  padding-top: var(--spacing-5);
+  border-top: 1px solid var(--color-border-light);
+}
+
+.task-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.task-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.3fr) minmax(160px, 1fr) minmax(160px, 1fr);
+  gap: var(--spacing-4);
+  align-items: start;
+  padding: var(--spacing-2) 0;
+}
+
+.task-row .model-field {
+  max-width: none;
+  min-width: 0;
+}
+
+.task-row--head {
+  padding-bottom: var(--spacing-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.task-group {
+  margin-top: var(--spacing-3);
+  padding-top: var(--spacing-1);
+  border-top: 1px solid var(--color-border-light);
+}
+
+.task-group__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  padding: var(--spacing-2) 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.task-group__toggle:hover .task-group__caret {
+  color: var(--color-text-primary);
+}
+
+.task-group__caret {
+  width: 12px;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.task-group__summary {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  font-weight: normal;
+  color: var(--color-text-tertiary);
+}
+
+.task-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--spacing-1);
+}
+
+.task-name__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.task-name__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.task-follows {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 720px) {
+  .task-row {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-2);
+  }
+
+  .task-row--head {
+    display: none;
+  }
 }
 
 .model-field {
@@ -493,12 +722,6 @@ const onVerifyChange = (event: Event): void => {
 }
 
 .model-field :deep(.el-select__caret) {
-  color: var(--color-text-tertiary);
-}
-
-.model-tier__hint {
-  margin: var(--spacing-1) 0 0;
-  font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
 }
 
