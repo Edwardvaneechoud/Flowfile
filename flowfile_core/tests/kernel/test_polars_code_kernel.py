@@ -334,13 +334,14 @@ def _add_polars_code(graph: FlowGraph, node_id: int, code: str, sources: list[in
 
 @pytest.fixture
 def kernel_calls(monkeypatch) -> list[dict]:
-    """Every ``_execute_on_kernel`` call of a test, each answered with one row, with no way into a server process."""
+    """Every ``_execute_on_kernel`` call of a test, each answered with one row that holds which call it was, with no
+    way into a server process."""
     calls: list[dict] = []
     kernels = _Kernels()
 
     def answer(self, **kwargs):
         calls.append(kwargs)
-        return FlowDataEngine(pl.LazyFrame({"answered": [1]}))
+        return FlowDataEngine(pl.LazyFrame({"answered": [len(calls)]}))
 
     monkeypatch.setattr(FlowGraph, "_execute_on_kernel", answer)
     monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: kernels)
@@ -398,6 +399,49 @@ class TestOnAServer:
 
         assert [column.name for column in graph.get_node(2).get_predicted_schema(force=True)] == ["answered"]
         assert len(kernel_calls) == 1
+
+    @pytest.mark.parametrize("due_again", ["a Performance run", "a forced fetch"])
+    def test_a_node_that_holds_a_result_runs_on_the_kernel_again_when_it_is_due(
+        self, on_a_server, kernel_calls, due_again
+    ):
+        """A run drops the node's result before it calls the node's function, so the answer a prediction gets for a
+        node that holds one, its columns and no rows, is never a run's."""
+        mode = "Performance" if due_again == "a Performance run" else "Development"
+        graph = make_graph(91449, execution_location="local", execution_mode=mode)
+        add_manual_input(graph, 1, [{"a": 1}])
+        _add_polars_code(graph, 2, ADD_ONE, [1])
+        add_select_on(graph, 3, 2, [("answered", "answered")], keep_missing=True)
+        first = graph.run_graph()
+        assert first.success is True, [result.error for result in first.node_step_result]
+        node = graph.get_node(2)
+        assert node.results.resulting_data is not None
+
+        if due_again == "a Performance run":
+            graph.run_graph()
+        else:
+            graph.trigger_fetch_node(2)
+
+        again = graph.get_run_info()
+        assert again.success is True, [result.error for result in again.node_step_result]
+        assert len(kernel_calls) == 2
+        assert node.get_resulting_data().collect().to_dicts() == [{"answered": 2}]
+        if due_again == "a Performance run":
+            assert graph.get_node(3).get_resulting_data().collect().to_dicts() == [{"answered": 2}]
+
+    def test_a_run_with_nothing_to_redo_keeps_the_rows_of_the_run_before(self, on_a_server, kernel_calls):
+        graph = make_graph(91450, execution_location="local")
+        add_manual_input(graph, 1, [{"a": 1}])
+        _add_polars_code(graph, 2, ADD_ONE, [1])
+        add_select_on(graph, 3, 2, [("answered", "answered")], keep_missing=True)
+        first = graph.run_graph()
+        assert first.success is True, [result.error for result in first.node_step_result]
+
+        again = graph.run_graph()
+
+        assert again.success is True, [result.error for result in again.node_step_result]
+        assert len(kernel_calls) == 1
+        assert graph.get_node(2).get_resulting_data().collect().to_dicts() == [{"answered": 1}]
+        assert graph.get_node(3).get_resulting_data().collect().to_dicts() == [{"answered": 1}]
 
     def test_code_the_sandbox_refuses_reaches_no_kernel(self, on_a_server, kernel_calls):
         graph = make_graph(91448, execution_location="local")
