@@ -52,6 +52,21 @@ When the Core service itself runs inside Docker (e.g., via `docker compose`), th
 
 This is configured automatically — no manual setup required beyond mounting the Docker socket.
 
+### Mounts
+
+| Core runs | A kernel mounts |
+|-----------|-----------------|
+| On the host (desktop, Python package, `FLOWFILE_MODE=server`) | The shared folder at `/shared` and the catalog tables folder at `/catalog_tables` |
+| In a container (`FLOWFILE_MODE=docker`) | The shared folder and the user data folder, each at the path Core has it |
+
+The shared folder is `<internal storage>/temp/kernel_shared`: node inputs and outputs, artifacts, view snapshots and the files of `flowfile_ctx.get_shared_location()`.
+
+In a container, Core finds the mount that holds the shared folder (`_discover_volume_for_path`) and gives the kernel that folder and nothing else of the mount (`_folder_mount`): the subpath of a named volume, the matching subfolder of a bind, or the whole mount when it is the shared folder itself. The path is the same in Core, the worker and the kernel, so no path is translated.
+
+A subpath needs Docker Engine 26.0 (API 1.45). On an older Docker a kernel whose shared folder is inside a named volume does not start (`KernelMountRefused`); Core never mounts the whole volume instead.
+
+A kernel's container carries a digest of its mounts as the label `flowfile_mounts`. Core removes a container whose label differs when it starts or when it adopts the container, so a kernel that an earlier release left running starts again with today's mounts.
+
 ### Environment Variables Passed to Kernels
 
 ```
@@ -234,7 +249,7 @@ Host:      /Users/you/.flowfile/shared/data/input.parquet
 Container: /shared/data/input.parquet
 ```
 
-In Docker-in-Docker mode, paths are identical (same named volume).
+In Docker-in-Docker mode, paths are identical: the kernel mounts the shared folder at the path Core has it (see [Mounts](#mounts)).
 
 ### Global Artifact Flow
 
@@ -319,7 +334,7 @@ The kernel sends its token in `X-Internal-Token`, the header a kernel has always
 
 - **Process isolation** — Each kernel runs in its own Docker container
 - **Resource limits** — Memory (`mem_limit`) and CPU (`nano_cpus`) are enforced by Docker
-- **Filesystem isolation** — A kernel writes only to `/shared` and `/catalog_tables` and mounts no other host folder; a notebook kernel reads files, catalog tables, flow files and custom node sources through core
+- **Filesystem isolation** — A kernel mounts the shared folder and the catalog tables folder (with Core in a container, the user data folder that holds it) and no other host folder, see [Mounts](#mounts); a notebook kernel reads files, catalog tables, flow files and custom node sources through core
 - **User ownership** — Each kernel is owned by the user who created it; other users cannot access it
 
 ### Trust Boundaries

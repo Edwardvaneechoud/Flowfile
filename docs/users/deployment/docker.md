@@ -289,6 +289,26 @@ flowfile-core:
 
 Leave `FLOWFILE_KERNEL_IMAGE` empty to use the registry default, or set it to point at a local or alternative image. Kernels default to 4 GB of memory.
 
+### What a kernel mounts
+
+A kernel mounts two folders, at the paths `flowfile-core` has them:
+
+- the kernels' shared folder, `/app/internal_storage/temp/kernel_shared`: node inputs and outputs, artifacts and the files written with `flowfile_ctx.get_shared_location()`;
+- the user data folder, `/app/user_data`, which holds the catalog's tables.
+
+It mounts nothing else of the internal storage volume.
+
+!!! warning "A named internal-storage volume needs Docker 26.0"
+    Mounting one folder of a named volume needs Docker Engine 26.0 or newer. On an older Docker, with internal storage on a named volume as in the bundled compose, a kernel does not start and its error says so. Upgrade Docker, or give the shared folder a volume of its own, at the same path in `flowfile-core` and `flowfile-worker`:
+
+    ```yaml
+    volumes:
+      - flowfile-internal-storage:/app/internal_storage
+      - flowfile-kernel-shared:/app/internal_storage/temp/kernel_shared
+    ```
+
+    Copy what is in `temp/kernel_shared` into the new volume first, because stored artifacts live there. Internal storage that is bind-mounted from a host folder works on any Docker.
+
 ### Adding extra packages
 
 When you create a kernel from the UI, packages listed in the **Extra Python packages** field are baked into a per-kernel Docker image at creation time (a `FROM <flavour> + RUN pip install` layer pinned against the flavour's constraints file). Subsequent kernel starts reuse that image and boot quickly. The derived image is removed when you delete the kernel.

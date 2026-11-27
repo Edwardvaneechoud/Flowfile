@@ -271,7 +271,9 @@ class TestConflictAdoption:
         kernel = _kernel(port=None)
         mgr = _start_ready_manager(kernel)
         mgr._kernel_volume = "flowfile-internal-storage"
+        mgr._build_run_kwargs = MagicMock(return_value={"labels": {"flowfile_mounts": "the mounts a kernel gets"}})
         existing = _fake_container("adopted-dind", status="running")
+        existing.labels["flowfile_mounts"] = "the mounts a kernel gets"
         mgr._docker.containers.run.side_effect = _api_error(409)
         mgr._docker.containers.get.return_value = existing
 
@@ -280,6 +282,34 @@ class TestConflictAdoption:
         assert result.state == KernelState.IDLE
         assert kernel.container_id == "adopted-dind"
         assert kernel.port is None
+
+    def test_409_replaces_a_container_with_other_mounts_dind_mode(self):
+        kernel = _kernel(port=None)
+        mgr = _start_ready_manager(kernel)
+        mgr._kernel_volume = "flowfile-internal-storage"
+        mgr._build_run_kwargs = MagicMock(return_value={"labels": {"flowfile_mounts": "the mounts a kernel gets"}})
+        whole_volume = _fake_container("whole-volume", status="running")
+        fresh = _fake_container("fresh-dind")
+        mgr._docker.containers.run.side_effect = [_api_error(409), fresh]
+        mgr._docker.containers.get.return_value = whole_volume
+
+        result = mgr.start_kernel_sync("ml")
+
+        assert result.state == KernelState.IDLE
+        assert kernel.container_id == "fresh-dind"
+        whole_volume.remove.assert_called_once_with(force=True)
+
+    def test_a_refused_mount_fails_the_start_with_its_sentence(self):
+        kernel = _kernel(port=None)
+        mgr = _start_ready_manager(kernel)
+        mgr._build_run_kwargs = MagicMock(side_effect=kernel_manager.KernelMountRefused("Docker is older than 26.0"))
+
+        with pytest.raises(kernel_manager.KernelMountRefused):
+            mgr.start_kernel_sync("ml")
+
+        assert kernel.state == KernelState.ERROR
+        assert kernel.error_message == "Docker is older than 26.0"
+        mgr._docker.containers.run.assert_not_called()
 
     def test_409_starts_stopped_container(self):
         kernel = _kernel()

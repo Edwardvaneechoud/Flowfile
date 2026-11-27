@@ -376,16 +376,42 @@ class FlowfileStorage:
 
         current_time = time.time()
         cutoff_time = current_time - (storage_duration_hours * 60 * 60)
+        shared = self.shared_directory
 
         for item in directory.iterdir():
             try:
-                if item.stat().st_mtime < cutoff_time:
+                if item == shared:
+                    self._sweep_shared_directory(cutoff_time)
+                elif item.stat().st_mtime < cutoff_time:
                     if item.is_file():
                         item.unlink()
                     elif item.is_dir():
                         shutil.rmtree(item)
             except (OSError, FileNotFoundError):
                 continue
+
+    def _sweep_shared_directory(self, cutoff_time: float) -> None:
+        """Sweep the kernels' shared folder without removing it.
+
+        A kernel may mount the folder itself, which would go stale if it were removed and made again, and stored
+        global artifacts, a kernel's persisted artifacts and people's files in ``user_files`` live in it and are
+        kept. Any other entry is removed once nothing in it was written since ``cutoff_time``; the staging and
+        view-snapshot folders stay and are swept by entry.
+        """
+        import shutil
+
+        shared = self.shared_directory
+        kept = (self.global_artifacts_directory, shared / "artifacts", shared / "user_files")
+        swept_by_entry = (self.artifact_staging_directory, self.shared_virtual_results_directory)
+        for item in shared.iterdir():
+            if item in kept:
+                continue
+            for entry in list(item.iterdir()) if item in swept_by_entry else [item]:
+                try:
+                    if _last_written(entry) < cutoff_time:
+                        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+                except OSError:
+                    continue
 
     def cleanup_directories(self) -> None:
         """Clean up temporary files older than specified hours."""
@@ -394,6 +420,11 @@ class FlowfileStorage:
         # logs_directory is deliberately absent: run/flow log retention is owned by
         # shared.run_logs.cleanup_old_logs (FLOWFILE_RUN_LOG_RETENTION_DAYS).
         self.cleanup_directory("system_logs_directory", storage_duration_hours=168)
+
+
+def _last_written(path: Path) -> float:
+    """The newest modification time of ``path`` and of everything under it."""
+    return max([path.stat().st_mtime, *(p.stat().st_mtime for p in path.rglob("*"))])
 
 
 storage = FlowfileStorage()
