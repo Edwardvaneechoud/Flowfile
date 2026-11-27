@@ -208,6 +208,15 @@ def delete_secret(db: Session, secret_name: str, user_id: int) -> None:
 
     if not db_secret:
         raise HTTPException(status_code=404, detail="Secret not found")
+    from flowfile_core.catalog.services.external_catalogs import catalog_signed_in_with
+
+    catalog = catalog_signed_in_with(db, db_secret)
+    if catalog is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This secret is the sign-in of the catalog {catalog}; change the sign-in on the catalog or remove "
+            "the catalog from Flowfile instead.",
+        )
 
     sharing.delete_grants_for_resource(db, "secret", db_secret.id)
     db.delete(db_secret)

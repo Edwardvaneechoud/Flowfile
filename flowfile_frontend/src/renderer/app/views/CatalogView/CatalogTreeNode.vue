@@ -21,12 +21,22 @@
       ></i>
       <span class="ns-name">{{ node.name }}</span>
       <SharedBadge :access="node.access" />
+      <ExternalCatalogBadge v-if="node.level === 0 && node.external" :external="node.external" />
       <CatalogStorageBadge
-        v-if="node.level === 0 && !isHub"
+        v-else-if="node.level === 0 && !isHub"
         :storage-uri="node.storage_uri"
         :connection-name="node.storage_connection_name"
       />
       <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
+      <button
+        v-if="!isHub && node.level === 0 && keptElsewhere"
+        class="action-btn external-refresh"
+        title="Refresh: ask the other catalog for its schemas now"
+        data-testid="external-refresh"
+        @click.stop="$emit('syncExternal', { id: node.id, force: true })"
+      >
+        <i class="fa-solid fa-rotate"></i>
+      </button>
       <div v-if="isHub && canShare(node)" class="tree-actions" @click.stop>
         <button class="action-btn" title="Share namespace" @click="$emit('namespaceShare', node)">
           <i class="fa-solid fa-share-nodes"></i>
@@ -34,7 +44,7 @@
       </div>
       <div v-if="!isHub" class="tree-actions" @click.stop>
         <button
-          v-if="isMultiUser && isOwned(node)"
+          v-if="isMultiUser && isOwned(node) && node.can_manage !== false"
           class="action-btn"
           title="Share namespace"
           @click="$emit('namespaceShare', node)"
@@ -42,7 +52,7 @@
           <i class="fa-solid fa-share-nodes"></i>
         </button>
         <button
-          v-if="node.level === 0"
+          v-if="node.level === 0 && node.can_write !== false && !keptElsewhere"
           class="action-btn"
           title="Add schema"
           @click="$emit('createSchema', node.id)"
@@ -50,7 +60,7 @@
           <i class="fa-solid fa-plus"></i>
         </button>
         <button
-          v-if="node.level === 1"
+          v-if="node.level === 1 && node.can_write !== false && !keptElsewhere"
           class="action-btn"
           title="Register table"
           @click="$emit('registerTable', node.id)"
@@ -58,7 +68,7 @@
           <i class="fa-solid fa-table"></i>
         </button>
         <button
-          v-if="node.level === 1"
+          v-if="node.level === 1 && node.can_write !== false && !keptElsewhere"
           class="action-btn"
           title="Register flow"
           @click="$emit('registerFlow', node.id)"
@@ -76,7 +86,9 @@
         <button
           v-if="canDeleteSchema"
           class="action-btn"
-          title="Delete empty schema"
+          :title="
+            keptElsewhere ? 'Remove: the other catalog no longer lists it' : 'Delete empty schema'
+          "
           data-testid="schema-delete"
           @click="$emit('deleteNamespace', node)"
         >
@@ -88,6 +100,23 @@
     <p v-if="reason !== null && node.level === 0" class="ns-unavailable">{{ reason }}</p>
 
     <div v-if="expanded" class="tree-children">
+      <div
+        v-if="showSemanticEntry"
+        class="tree-table semantic-entry"
+        :class="{ selected: selectedSemanticNamespaceId === node.id }"
+        data-testid="semantic-model-entry"
+        @click.stop="$emit('selectSemanticModel', node.id)"
+      >
+        <i class="fa-solid fa-sitemap table-icon"></i>
+        <span class="table-name">Semantic model</span>
+        <span
+          v-if="semanticPending > 0"
+          class="semantic-pending-badge"
+          :title="`${semanticPending} facts waiting for review`"
+          >{{ semanticPending }}</span
+        >
+      </div>
+
       <!-- Child namespaces (schemas) -->
       <div v-for="child in shownChildren" :key="child.id" class="tree-child-wrapper">
         <CatalogTreeNode
@@ -95,12 +124,14 @@
           :selected-flow-id="selectedFlowId"
           :selected-artifact-id="selectedArtifactId"
           :selected-table-id="selectedTableId"
+          :selected-semantic-namespace-id="selectedSemanticNamespaceId"
           :search-query="searchQuery"
           :show-unavailable="showUnavailable"
           :filter-bypass="bypass"
           @select-flow="$emit('selectFlow', $event)"
           @select-artifact="$emit('selectArtifact', $event)"
           @select-table="$emit('selectTable', $event)"
+          @select-semantic-model="$emit('selectSemanticModel', $event)"
           @table-context-menu="$emit('tableContextMenu', $event)"
           @artifact-context-menu="$emit('artifactContextMenu', $event)"
           @flow-context-menu="$emit('flowContextMenu', $event)"
@@ -117,8 +148,58 @@
           @namespace-share="$emit('namespaceShare', $event)"
           @cleanup-namespace="$emit('cleanupNamespace', $event)"
           @delete-namespace="$emit('deleteNamespace', $event)"
+          @sync-external="$emit('syncExternal', $event)"
+          @select-external-table="$emit('selectExternalTable', $event)"
         />
       </div>
+
+      <TreeSection
+        v-if="showExternalTables"
+        title="Tables"
+        :count="externalState?.tables.length ?? 0"
+        :storage-key="sectionKey('tables')"
+        :default-expanded="true"
+        :search-active="searching"
+        data-testid="external-tables"
+      >
+        <div v-if="listedTime" class="tree-note listed-line" data-testid="external-listed">
+          <span>listed {{ listedTime }}</span>
+          <button
+            class="action-btn"
+            title="Refresh: list this schema's tables again now"
+            data-testid="external-tables-refresh"
+            :disabled="externalState?.loading"
+            @click.stop="relistTables"
+          >
+            <i class="fa-solid fa-rotate" :class="{ 'fa-spin': externalState?.loading }"></i>
+          </button>
+        </div>
+        <div v-if="externalState?.loading && !externalState.tables.length" class="tree-note">
+          Loading…
+        </div>
+        <div v-else-if="externalState?.error" class="tree-note error">
+          {{ externalState.error }}
+        </div>
+        <div v-else-if="externalState && !externalState.tables.length" class="tree-note">
+          No tables
+        </div>
+        <div
+          v-for="table in externalState?.tables ?? []"
+          :key="'x-' + table.name"
+          class="tree-table"
+          :data-testid="`external-table-${table.name}`"
+          @click.stop="
+            $emit('selectExternalTable', {
+              catalogId: node.parent_id,
+              schemaId: node.id,
+              name: table.name,
+            })
+          "
+        >
+          <i class="fa-solid fa-table table-icon external-table-icon"></i>
+          <span class="table-name">{{ table.name }}</span>
+        </div>
+      </TreeSection>
 
       <TreeSection
         v-if="showFlowsSection"
@@ -377,6 +458,8 @@ import {
 } from "./catalogTreeFilter";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
+import ExternalCatalogBadge from "./ExternalCatalogBadge.vue";
+import { utcTime } from "./externalCatalog";
 import { hubFlowVersionTitle, isHubRow, unavailableReason } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
@@ -404,6 +487,7 @@ const props = withDefaults(
     selectedArtifactId: number | null;
     selectedTableId: number | null;
     selectedNamespaceId?: number | null;
+    selectedSemanticNamespaceId?: number | null;
     searchQuery?: string;
     showUnavailable?: boolean;
     // Set when an ancestor namespace matched the search by its own name: this
@@ -412,6 +496,7 @@ const props = withDefaults(
   }>(),
   {
     selectedNamespaceId: null,
+    selectedSemanticNamespaceId: null,
     searchQuery: "",
     showUnavailable: false,
     filterBypass: false,
@@ -423,6 +508,7 @@ const emit = defineEmits([
   "selectArtifact",
   "selectTable",
   "selectNamespace",
+  "selectSemanticModel",
   "tableContextMenu",
   "artifactContextMenu",
   "flowContextMenu",
@@ -439,6 +525,8 @@ const emit = defineEmits([
   "namespaceShare",
   "cleanupNamespace",
   "deleteNamespace",
+  "syncExternal",
+  "selectExternalTable",
 ]);
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
@@ -463,6 +551,17 @@ const reason = computed(() => unavailableReason(props.node));
 function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
   emit("tableContextMenu", { table, x: event.clientX, y: event.clientY });
 }
+
+// A schema's model only; a catalog's joins across schemas live on the catalog's page.
+const showSemanticEntry = computed(
+  () =>
+    props.node.level === 1 &&
+    !isHub.value &&
+    reason.value === null &&
+    !searching.value &&
+    props.node.semantic_model_readable !== false,
+);
+const semanticPending = computed(() => props.node.semantic_model?.pending ?? 0);
 
 const rawQuery = computed(() => normalizeQuery(props.searchQuery));
 const searching = computed(() => rawQuery.value.length > 0);
@@ -524,13 +623,58 @@ const isScratchSchema = computed(
 
 const catalogStore = useCatalogStore();
 
+const keptElsewhere = computed(() => !!props.node.kept_elsewhere);
+
+// A schema another catalog keeps is removed here only once that catalog stopped listing it.
 const canDeleteSchema = computed(
   () =>
     props.node.level === 1 &&
+    (!keptElsewhere.value || !!props.node.gone_since) &&
     !SYSTEM_NAMESPACE_NAMES.has(props.node.name) &&
     !isSeededSchema(props.node, catalogStore.tree) &&
     canManage(props.node) &&
+    props.node.can_manage !== false &&
     isEmptySchema(props.node),
+);
+
+const externalKey = computed(() => `${props.node.parent_id}:${props.node.id}`);
+const externalState = computed(() => catalogStore.externalTables[externalKey.value]);
+const showExternalTables = computed(
+  () => props.node.level === 1 && keptElsewhere.value && !props.node.gone_since,
+);
+
+// Core sends the time as naive UTC; shown as the reader's local HH:MM.
+const listedTime = computed(() => {
+  if (props.node.parent_id === null) return null;
+  const at = catalogStore.externalTablesListedAt(props.node.parent_id, props.node.id);
+  if (!at) return null;
+  const when = utcTime(at);
+  if (Number.isNaN(when.getTime())) return null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(when.getHours())}:${pad(when.getMinutes())}`;
+});
+
+function relistTables() {
+  if (props.node.parent_id === null) return;
+  void catalogStore.loadExternalTables(props.node.parent_id, props.node.id, true);
+}
+
+// Opening a catalog kept elsewhere brings its schemas in line (core skips it when done within half a minute);
+// opening one of its schemas lists that schema's tables, again when the list is more than a minute old.
+watch(
+  expanded,
+  (open) => {
+    if (!open || !keptElsewhere.value) return;
+    if (props.node.level === 0) emit("syncExternal", { id: props.node.id, force: false });
+    else if (
+      showExternalTables.value &&
+      props.node.parent_id !== null &&
+      !externalState.value?.loading &&
+      catalogStore.externalTablesStale(props.node.parent_id, props.node.id)
+    )
+      void catalogStore.loadExternalTables(props.node.parent_id, props.node.id);
+  },
+  { immediate: true },
 );
 
 const showFlowsSection = computed(() => props.node.level === 1 && visibleFlows.value.length > 0);
@@ -671,6 +815,12 @@ const totalFlows = computed(() => {
 
 .tree-row:hover .tree-actions {
   opacity: 1;
+}
+
+.listed-line {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
 }
 
 .tree-children {
@@ -874,6 +1024,18 @@ const totalFlows = computed(() => {
   opacity: 1;
 }
 
+.semantic-pending-badge {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 0 var(--spacing-1);
+  border-radius: 9px;
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-align: center;
+}
+
 .tree-table.selected {
   background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
 }
@@ -931,6 +1093,20 @@ const totalFlows = computed(() => {
   line-height: 16px;
   flex-shrink: 0;
   font-weight: var(--font-weight-medium);
+}
+
+.tree-table .external-table-icon {
+  color: var(--el-color-success, #67c23a);
+}
+
+.tree-note {
+  padding: var(--spacing-1) var(--spacing-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.tree-note.error {
+  color: var(--el-color-danger, #f56c6c);
 }
 
 .tree-table .table-name {

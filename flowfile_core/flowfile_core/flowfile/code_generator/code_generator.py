@@ -2777,6 +2777,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self._add_code(f"{var_name} = ff.read_from_cloud_storage(")
         self._add_code(f'    "{cs.resource_path}",')
         self._add_code(f'    file_format="{cs.file_format}",')
+        self._emit_iceberg_catalog_kwargs(cs)
         if cs.connection_name:
             self._add_code(f'    connection_name="{cs.connection_name}",')
         if cs.scan_mode and cs.scan_mode != "single_file":
@@ -2796,6 +2797,21 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self._add_code(")")
         self._add_code("")
 
+    def _emit_iceberg_catalog_kwargs(self, cs) -> None:
+        """The catalog keywords of an Iceberg cloud node: the catalog's name in Flowfile's catalog, or its address and
+        its warehouse and token secret when set."""
+        catalog = cs.iceberg_catalog
+        if cs.file_format != "iceberg" or catalog is None:
+            return
+        if catalog.catalog is not None:
+            self._add_code(f"    catalog={catalog.catalog!r},")
+            return
+        self._add_code(f"    catalog_uri={catalog.uri!r},")
+        if catalog.warehouse:
+            self._add_code(f"    catalog_warehouse={catalog.warehouse!r},")
+        if catalog.token_secret:
+            self._add_code(f"    catalog_token_secret={catalog.token_secret!r},")
+
     def _handle_cloud_storage_writer(
         self, settings: input_schema.NodeCloudStorageWriter, var_name: str, input_vars: dict[str, str]
     ) -> None:
@@ -2805,6 +2821,9 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self._add_code(f"    {input_df},")
         self._add_code(f'    "{cs.resource_path}",')
         self._add_code(f'    file_format="{cs.file_format}",')
+        self._emit_iceberg_catalog_kwargs(cs)
+        if cs.file_format == "iceberg" and cs.write_mode != "overwrite":
+            self._add_code(f'    write_mode="{cs.write_mode}",')
         if cs.connection_name:
             self._add_code(f'    connection_name="{cs.connection_name}",')
         if cs.file_format == "csv":

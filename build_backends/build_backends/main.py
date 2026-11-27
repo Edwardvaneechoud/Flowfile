@@ -247,6 +247,16 @@ def get_share_manifest_datas():
         return [(manifest, _os.path.join("flowfile_core", "flowfile", "share"))]
     return []
 
+# Ship the AI system prompts. The AI modules read them at Path(__file__) / "prompts";
+# without them the semantic features fail and the chat surfaces run with an empty prompt.
+def get_ai_prompts_datas():
+    \"\"\"Collect the AI prompt Markdown files for PyInstaller bundling.\"\"\"
+    import os as _os
+    prompts_dir = _os.path.join("flowfile_core", "flowfile_core", "ai", "prompts")
+    if _os.path.isdir(prompts_dir):
+        return [(prompts_dir, _os.path.join("flowfile_core", "ai", "prompts"))]
+    return []
+
 # Collect numpy and pyarrow data files
 numpy_datas = collect_data_files('numpy')
 pyarrow_datas = collect_data_files('pyarrow')
@@ -257,6 +267,7 @@ demo_flows_datas = get_demo_flows_datas()
 standard_icons_datas = get_standard_icons_datas()
 kernel_manifest_datas = get_kernel_manifest_datas()
 share_manifest_datas = get_share_manifest_datas()
+ai_prompts_datas = get_ai_prompts_datas()
 
 # Polars plugins that have subpackages or compiled extensions. The plain
 # `hiddenimports=['polars_ds']` directive only adds the top-level — it does
@@ -325,6 +336,16 @@ for _pkg in ('tokenizers', 'tiktoken'):
         print(f"WARN: could not copy metadata {{_pkg}}: {{_e}}")
 ai_hiddenimports += ['tiktoken_ext', 'tiktoken_ext.openai_public']
 
+# glosslayer ships the Ossie JSON schema as package data and is imported lazily by the catalog.
+gloss_hiddenimports = []
+gloss_datas = []
+for _pkg in ('glosslayer', 'glosslayer_flowfile'):
+    try:
+        gloss_hiddenimports += collect_submodules(_pkg)
+        gloss_datas += collect_data_files(_pkg)
+    except Exception as _e:
+        print(f"WARN: could not collect {{_pkg}}: {{_e}}")
+
 collected_hiddenimports = []
 for _pkg in {list(collected_packages)!r}:
     collected_hiddenimports += collect_submodules(_pkg)
@@ -348,10 +369,11 @@ a = Analysis(
     binaries=plugin_binaries + ai_binaries + driver_binaries,
     datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas
     + code_generator_datas + demo_flows_datas + standard_icons_datas
-    + kernel_manifest_datas + share_manifest_datas + plugin_datas + handshake_metadata_datas
-    + litellm_datas + ai_datas + driver_datas,
+    + kernel_manifest_datas + share_manifest_datas + ai_prompts_datas + plugin_datas + handshake_metadata_datas
+    + litellm_datas + ai_datas + driver_datas + gloss_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
-    + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + driver_hiddenimports + [
+    + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + driver_hiddenimports
+    + gloss_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',
         'numpy.core._methods',

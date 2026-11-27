@@ -70,6 +70,8 @@ export interface LspDataframeSchemasResponse {
   revision: number;
   state: "ready" | "busy" | "unavailable";
   dataframes: LspDataframeSchema[];
+  /** The kernel itself answered, so an empty generation means it holds no such namespace. */
+  answered?: boolean;
 }
 export interface LspDataframeSchemasPayload {
   flow_id: number; // namespace/session key (node flow_id or notebook sessionFlowId)

@@ -3,6 +3,7 @@
 import type { AccessInfo } from "./sharing.types";
 import type { NotebookSummary } from "../api/notebook.api";
 import type { FlowParameter } from "./flow.types";
+import type { SemanticModelSummary } from "./semantic.types";
 
 // Namespace (Unity Catalog-style hierarchy)
 
@@ -21,6 +22,102 @@ export interface CatalogNamespace {
   access?: AccessInfo | null;
   // "hub" for a connected hub's catalog: its id is the negative of the hub's own id.
   source?: "local" | "hub";
+  // A catalog, or a schema of one, that another provider keeps (an Iceberg REST catalog).
+  kept_elsewhere?: boolean;
+  // Set on such a schema once the other catalog stopped listing it.
+  gone_since?: string | null;
+  // How a catalog kept elsewhere is reached (level 0 only); never its secret.
+  external?: ExternalCatalogInfo | null;
+}
+
+export type ExternalSignIn = "none" | "token" | "client_credentials";
+
+export interface ExternalCatalogInfo {
+  kind: string;
+  uri: string;
+  warehouse: string | null;
+  sign_in: ExternalSignIn;
+  client_id: string | null;
+  scope: string | null;
+  token_endpoint: string | null;
+  synced_at: string | null;
+  sync_error: string | null;
+  not_shown: number;
+}
+
+/** The add and edit form; the secret fields are typed by the person and never answered by core. */
+export interface ExternalCatalogForm {
+  name: string;
+  description: string;
+  uri: string;
+  warehouse: string;
+  sign_in: ExternalSignIn;
+  token: string;
+  client_id: string;
+  client_secret: string;
+  scope: string;
+  token_endpoint: string;
+}
+
+/** What the add, edit and test routes take; a secret key is absent when the person left it empty. */
+export interface ExternalCatalogPayload {
+  name?: string;
+  description?: string | null;
+  uri: string;
+  warehouse?: string | null;
+  sign_in: ExternalSignIn;
+  token?: string;
+  client_id?: string | null;
+  client_secret?: string;
+  scope?: string | null;
+  token_endpoint?: string | null;
+}
+
+export interface ExternalCatalogTestResult {
+  ok: boolean;
+  message: string;
+  schemas: number | null;
+}
+
+export interface ExternalCatalogSyncResult {
+  added: string[];
+  gone: string[];
+  back: string[];
+  not_shown: number;
+  synced_at: string | null;
+  skipped: boolean;
+  error: string | null;
+}
+
+export interface ExternalTable {
+  name: string;
+  reference: string;
+}
+
+export interface ExternalTableList {
+  tables: ExternalTable[];
+  listed_at: string;
+  cached: boolean;
+}
+
+export interface ExternalTableDetail {
+  name: string;
+  reference: string;
+  table: string;
+  columns: { name: string; dtype: string }[];
+  format_version: number;
+  location: string;
+  partitioned_by: string[];
+  updated_at: string | null;
+  // The flows of this Flowfile that read the table, and the one that last wrote it.
+  read_by_flows?: FlowSummary[];
+  written_by?: FlowSummary | null;
+  // The table's current snapshot, from its metadata (naive UTC); absent from a core that does not describe it yet.
+  last_commit_at?: string | null;
+  // Served but not shown: Flowfile's own overwrite commits a delete and then an append.
+  last_operation?: string | null;
+  // 0 for a table with no snapshot.
+  snapshot_count?: number;
 }
 
 export interface NamespaceTree extends CatalogNamespace {
@@ -36,6 +133,14 @@ export interface NamespaceTree extends CatalogNamespace {
   tables: CatalogTable[];
   visualizations: CatalogVisualization[];
   notebooks: NotebookSummary[];
+  semantic_model?: SemanticModelSummary | null;
+  // False where the person has no semantic model to open here (core decides; absent means true).
+  semantic_model_readable?: boolean;
+  // False where the person may not rename, delete, share or re-store it, as on a public namespace they do not own;
+  // writing into it is another matter (absent means true).
+  can_manage?: boolean;
+  // Whether the person may create schemas, flows, tables and the like in it; core's answer for this machine's rows.
+  can_write?: boolean;
 }
 
 // System-managed schemas under "General" that users never pick as a store target.
@@ -52,8 +157,9 @@ export const SCRATCH_NAMESPACE_NAMES = new Set(["Unnamed Flows", "Python Editor"
 
 // The local tree (a hub's catalogs left out) without the system schemas of the "General" root.
 export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {
+  // A catalog another provider keeps takes nothing Flowfile saves; core refuses it too.
   return tree
-    .filter((node) => node.source !== "hub")
+    .filter((node) => node.source !== "hub" && !node.kept_elsewhere)
     .map((node) =>
       node.name === "General" && node.parent_id === null
         ? { ...node, children: node.children.filter((c) => !SYSTEM_NAMESPACE_NAMES.has(c.name)) }
@@ -340,6 +446,8 @@ export interface CatalogTable {
   full_table_name: string | null;
   // Fully-qualified catalog.schema.table (full_table_name is only 2-part schema.table).
   qualified_name: string | null;
+  // Semantic-model fact counts; set on the tables of the namespace tree only.
+  semantic_model?: SemanticModelSummary | null;
   description: string | null;
   owner_id: number;
   file_exists: boolean;

@@ -290,7 +290,7 @@ def test_bob_cannot_preview_or_edit_alice_flow(flows):
 
 def test_register_does_not_evict_another_users_flow(flows, users):
     alice_graph = flow_file_handler.get_flow(flows.alice_flow)
-    settings = schemas.FlowSettings(flow_id=flows.alice_flow, name="taken", path=".")
+    settings = schemas.FlowSettings(flow_id=flows.alice_flow, name="taken")
 
     response = flows.bob.post("/flow/register/", json=settings.model_dump(mode="json"))
 

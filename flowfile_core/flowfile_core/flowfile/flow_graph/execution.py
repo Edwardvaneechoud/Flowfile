@@ -52,7 +52,11 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph._root import root
-from flowfile_core.flowfile.flow_graph.cloud import _cloud_change_read_target, _is_cloud_change_read
+from flowfile_core.flowfile.flow_graph.cloud import (
+    _cloud_change_read_target,
+    _iceberg_table_ref,
+    _is_cloud_change_read,
+)
 from flowfile_core.flowfile.flow_graph.freshness import (
     _catalog_reader_source_fingerprint,
     _cdc_since_param_state,
@@ -86,6 +90,7 @@ from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import NodeResult, RunInformation
 from shared import server_extension
 from shared.compute_protocol import Capabilities
+from shared.iceberg_utils import metadata_fingerprint
 
 ambient_kernel_hold: ContextVar[KernelHold | None] = ContextVar("ambient_kernel_hold", default=None)
 """The ``kernel_hold`` of the run whose thread this is: ``run_graph`` sets it for its own thread and every node it
@@ -1541,7 +1546,8 @@ class ExecutionMixin(GraphMixinBase):
         Pinned ``delta_version`` readers are deliberate time travel and are
         never probed. Probe failures fail open (invalidate) so the real error
         surfaces on the canvas instead of a silently-served stale snapshot.
-        Cloud readers get the same pass only when they read a Delta change feed.
+        Cloud readers get the same pass only when they read a Delta change feed or an Iceberg table, whose
+        fingerprint is the current metadata file its catalog reports.
         """
         version_cache: dict[str, int] = {}
         opts_by_namespace: dict[int | None, dict | None] = {}
@@ -1552,7 +1558,12 @@ class ExecutionMixin(GraphMixinBase):
                 and isinstance(settings, input_schema.NodeCloudStorageReader)
                 and _is_cloud_change_read(settings.cloud_storage_settings)
             )
-            if not cloud_change_read:
+            iceberg_read = (
+                node.node_type == "cloud_storage_reader"
+                and isinstance(settings, input_schema.NodeCloudStorageReader)
+                and settings.cloud_storage_settings.file_format == "iceberg"
+            )
+            if not cloud_change_read and not iceberg_read:
                 if node.node_type != "catalog_reader" or not isinstance(settings, input_schema.NodeCatalogReader):
                     continue
                 if table_sources.is_remote(settings.source):
@@ -1560,7 +1571,9 @@ class ExecutionMixin(GraphMixinBase):
                 if not settings.sql_query and settings.delta_version is not None:
                     continue
             try:
-                if cloud_change_read:
+                if iceberg_read:
+                    fingerprint, force = self._iceberg_read_fingerprint(node), False
+                elif cloud_change_read:
                     fingerprint, force = self._cloud_change_read_fingerprint(node, version_cache), False
                 else:
                     fingerprint, force = _catalog_reader_source_fingerprint(
@@ -1610,6 +1623,12 @@ class ExecutionMixin(GraphMixinBase):
             path, storage_options = _cloud_change_read_target(read_settings, node.setting_input.user_id)
             head = _probe_version_entry(path, storage_options, version_cache)
         return _delta_reader_fingerprint(path, head, cdc_state)
+
+    def _iceberg_read_fingerprint(self, node: FlowNode) -> str:
+        """Freshness fingerprint of an Iceberg reader: its table's current metadata file, asked of the catalog here."""
+        with node_parameters_resolved(node):
+            ref = _iceberg_table_ref(node.setting_input.cloud_storage_settings, node.setting_input.user_id)
+        return metadata_fingerprint(ref)
 
     def _refresh_read_source_freshness(self, nodes: list[FlowNode] | None = None) -> None:
         """Invalidate read nodes (of ``nodes``, default all) whose source files changed since their last run.

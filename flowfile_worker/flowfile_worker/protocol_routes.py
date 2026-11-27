@@ -28,6 +28,7 @@ from flowfile_worker.service import (
     SAMPLE_ROWS_IN_PARENT,
     CredentialRefBody,
     ExportBody,
+    IcebergWriteInput,
     ImportBody,
     MlApplyInput,
     MlTrainInput,
@@ -58,6 +59,7 @@ __all__ = [
     "SAMPLE_ROWS_IN_PARENT",
     "CredentialRefBody",
     "ExportBody",
+    "IcebergWriteInput",
     "ImportBody",
     "JobId",
     "MlApplyInput",
@@ -210,6 +212,7 @@ _OPS: dict[str, type] = {
     "file_write": models.PolarsScriptWrite,
     "database_write": models.DatabaseScriptWrite,
     "cloud_write": models.CloudStorageScriptWrite,
+    "iceberg_write": IcebergWriteInput,
     "polars_code": PolarsCodeInput,
     "sql_query": SqlQueryInput,
 }

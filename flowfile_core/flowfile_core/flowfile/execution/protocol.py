@@ -197,6 +197,7 @@ class OperationKind(enum.Enum):
     rest_api_read = "rest_api_read"
     database_write = "database_write"
     cloud_write = "cloud_write"
+    iceberg_write = "iceberg_write"
     file_write = "file_write"
     file_read = "file_read"
     fuzzy_join = "fuzzy_join"

@@ -187,8 +187,8 @@ def _import_flow(client: httpx.Client) -> int:
         tmp_path = f.name
 
     try:
-        # Place inside /app (the container's WORKDIR) so it passes path validation
-        dest_path = "/app/kernel_test_flow.json"
+        # One of the folders a server opens flows from, in the volume the teardown removes
+        dest_path = "/app/internal_storage/temp/flows/kernel_test_flow.json"
         cp_result = subprocess.run(
             ["docker", "cp", tmp_path, f"{container_id}:{dest_path}"],
             capture_output=True,
@@ -271,6 +271,22 @@ class TestDockerKernelE2E:
         node_data = node_data_resp.json()
         assert node_data["columns"] == ["x1", "x2", "y", "predicted_y"]
         assert len(node_data["data"]) == 4
+
+    def test_the_kernel_sees_only_the_shared_folder_of_internal_storage(self, kernel_ready: str):
+        """Of the internal storage volume the kernel mounts ``temp/kernel_shared``, at the path core has it."""
+
+        def ls(path: str) -> list[str]:
+            listing = subprocess.run(
+                ["docker", "exec", f"flowfile-kernel-{kernel_ready}", "ls", path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            return listing.stdout.split()
+
+        assert ls("/app/internal_storage") == ["temp"]
+        assert ls("/app/internal_storage/temp") == ["kernel_shared"]
 
 
 if __name__ == "__main__":

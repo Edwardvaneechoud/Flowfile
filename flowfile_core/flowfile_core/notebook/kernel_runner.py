@@ -290,7 +290,7 @@ def dataframe_schemas(flow, user, kernel_id: str) -> dict:
     manager = _checked(kernel_id, user, flow.flow_id)
     payload, _ = _session_call(manager, flow, kernel_id, "schemas")
     if payload is None or not payload.get("ok"):
-        return {**empty, "state": "unavailable"}
+        return {**empty, "state": "unavailable", "answered": bool(payload and payload.get("no_session"))}
     frames = [
         {
             "name": name,
@@ -306,6 +306,7 @@ def dataframe_schemas(flow, user, kernel_id: str) -> dict:
         "revision": payload.get("revision"),
         "state": "ready",
         "dataframes": frames,
+        "answered": True,
     }
 
 

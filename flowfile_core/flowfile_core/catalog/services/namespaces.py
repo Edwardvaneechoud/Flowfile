@@ -8,6 +8,7 @@ from collections.abc import Callable
 from flowfile_core.catalog.constants import DEFAULT_SCHEMA, ROOT_CATALOG, is_seeded_namespace
 from flowfile_core.catalog.exceptions import (
     InvalidNamespaceStorageError,
+    KeptElsewhereError,
     NamespaceExistsError,
     NamespaceNotEmptyError,
     NamespaceNotFoundError,
@@ -16,13 +17,16 @@ from flowfile_core.catalog.exceptions import (
     SeededNamespaceError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.semantic import host as semantic
 from flowfile_core.catalog.serializers import artifact_to_out
+from flowfile_core.catalog.services.external_catalogs import gone_sentence
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.catalog.validators import reject_dot_in_name
 from flowfile_core.configs import settings
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
 from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
+    ExternalCatalogOut,
     FlowRegistrationOut,
     GlobalArtifactOut,
     NamespaceTree,
@@ -192,6 +196,8 @@ class NamespaceService:
             parent = self.repo.get_namespace(parent_id)
             if parent is None:
                 raise NamespaceNotFoundError(namespace_id=parent_id)
+            if parent.kept_elsewhere:
+                raise KeptElsewhereError(parent.name, "add schemas to it; add them in that catalog")
             if parent.level >= 1:
                 raise NestingLimitError(parent_id=parent_id, parent_level=parent.level)
             level = parent.level + 1
@@ -238,6 +244,14 @@ class NamespaceService:
         namespace = self.repo.get_namespace(namespace_id)
         if namespace is None:
             raise NamespaceNotFoundError(namespace_id=namespace_id)
+        if namespace.kept_elsewhere and namespace.level >= 1 and name is not None and name != namespace.name:
+            raise KeptElsewhereError(namespace.name, "rename it; its name is the other catalog's")
+        storage_given = storage_uri is not STORAGE_UNSET or storage_connection_name is not STORAGE_UNSET
+        if namespace.kept_elsewhere and storage_given:
+            raise KeptElsewhereError(namespace.name, "keep its tables in storage of its own")
+        renamed = name is not None and name != namespace.name
+        old_path = self.resolve_namespace_path(namespace_id) if renamed else None
+        old_keys = self._table_keys_under(namespace_id) if renamed else []
         if name is not None:
             namespace.name = name
         if description is not None:
@@ -266,7 +280,21 @@ class NamespaceService:
                 namespace.storage_connection_name = new_conn
 
         updated = self.repo.update_namespace(namespace)
+        if renamed:
+            new_keys = self._table_keys_under(namespace_id)
+            semantic.on_namespace_renamed(
+                old_path, self.resolve_namespace_path(namespace_id), list(zip(old_keys, new_keys, strict=True))
+            )
         return updated
+
+    def _table_keys_under(self, namespace_id: int) -> list[str]:
+        """Qualified names of the tables in a namespace and its schemas, in a stable order."""
+        ns_ids = [namespace_id] + sorted(c.id for c in self.repo.list_child_namespaces(namespace_id))
+        keys = []
+        for ns_id in ns_ids:
+            path = self.resolve_namespace_path(ns_id)
+            keys += [f"{path}.{t.name}" for t in sorted(self.repo.list_tables(namespace_id=ns_id), key=lambda t: t.id)]
+        return keys
 
     def _is_seeded(self, namespace: CatalogNamespace) -> bool:
         """Whether ``namespace`` is the root catalog or one of the schemas the application keeps under it."""
@@ -284,14 +312,24 @@ class NamespaceService:
             raise NamespaceNotFoundError(namespace_id=namespace_id)
         if self._is_seeded(namespace):
             raise SeededNamespaceError(namespace_id=namespace_id, name=namespace.name)
+        if namespace.kept_elsewhere and (namespace.level == 0 or namespace.gone_since is None):
+            raise KeptElsewhereError(namespace.name, "remove it here; remove the catalog from Flowfile instead")
         children = self.repo.count_children(namespace_id)
         flows = self.repo.count_flows_in_namespace(namespace_id)
         tables = self.repo.count_tables_in_namespace(namespace_id)
         notebooks = self.repo.count_notebooks_in_namespace(namespace_id)
+        if namespace.kept_elsewhere:
+            from flowfile_core.catalog.services.external_catalogs import kept_table_row_count
+
+            tables -= kept_table_row_count(self.repo, namespace_id)
         if children > 0 or flows > 0 or tables > 0 or notebooks > 0:
             raise NamespaceNotEmptyError(
                 namespace_id=namespace_id, children=children, flows=flows, tables=tables, notebooks=notebooks
             )
+        if namespace.kept_elsewhere:
+            from flowfile_core.catalog.services.external_catalogs import drop_table_rows
+
+            drop_table_rows(self.repo, namespace_id)
         self.repo.delete_namespace(namespace_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
@@ -334,6 +372,7 @@ class NamespaceService:
         stays a leaf — see ``CatalogService.get_namespace_tree`` for wiring.
         """
         catalogs = self.repo.list_root_namespaces()
+        external = {row.namespace_id: row for row in self.repo.list_external_catalogs()}
 
         all_flows: list[FlowRegistration] = []
         namespace_flow_map: dict[int, list[FlowRegistration]] = {}
@@ -400,6 +439,11 @@ class NamespaceService:
                         updated_at=schema.updated_at,
                         storage_uri=schema.storage_uri,
                         storage_connection_name=schema.storage_connection_name,
+                        kept_elsewhere=schema.kept_elsewhere,
+                        gone_since=schema.gone_since,
+                        unavailable_reason=(
+                            gone_sentence(cat.name, schema.gone_since) if schema.gone_since is not None else None
+                        ),
                         children=[],
                         flows=flow_outs,
                         artifacts=namespace_artifact_map.get(schema.id, []),
@@ -422,6 +466,8 @@ class NamespaceService:
                     updated_at=cat.updated_at,
                     storage_uri=cat.storage_uri,
                     storage_connection_name=cat.storage_connection_name,
+                    kept_elsewhere=cat.kept_elsewhere,
+                    external=(ExternalCatalogOut.model_validate(external[cat.id]) if cat.id in external else None),
                     children=children,
                     flows=root_flow_outs,
                     artifacts=namespace_artifact_map.get(cat.id, []),

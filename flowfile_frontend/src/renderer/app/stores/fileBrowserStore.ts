@@ -13,7 +13,13 @@ export type SortDirectionType = "asc" | "desc";
  * localStorage entries stays fixed however many connections a user cycles through.
  * Which connection a remembered path belongs to is tracked separately as its scope.
  */
-export type FileBrowserContext = "flows" | "dataFiles" | "output" | "cloudRead" | "cloudWrite";
+export type FileBrowserContext =
+  | "flows"
+  | "dataFiles"
+  | "output"
+  | "cloudRead"
+  | "cloudWrite"
+  | "workspace";
 
 /**
  * State for a single file browser context
@@ -84,6 +90,8 @@ export const useFileBrowserStore = defineStore("fileBrowser", {
       output: loadContextState("output"),
       cloudRead: loadContextState("cloudRead"),
       cloudWrite: loadContextState("cloudWrite"),
+      // The Workspace page, a server's own files apart from any dialog.
+      workspace: loadContextState("workspace"),
     } as Record<FileBrowserContext, ContextState>,
   }),
 

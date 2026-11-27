@@ -25,7 +25,9 @@ The **⋯** menu on a cell's toolbar holds the rest: **Insert above** and **Inse
 
 ## Outdated outputs
 
-A result never disappears because you changed the code that made it — it stays on screen and says that it is out of date. Edit a cell that has already run and its output is labelled **Code changed — rerun**; every later Python cell that holds a result picks up **Earlier cells changed — rerun**, because running an earlier cell — or inserting, deleting, moving or duplicating one — can change the values everything below it was built on. A result from a kernel session that no longer exists is labelled **Previous session**, which is what you see after switching kernels or reopening the panel. Rerunning a cell clears its own label and leaves the ones below it alone.
+A result never disappears because you changed the code that made it — it stays on screen and says that it is out of date. Edit a cell that has already run and its output is labelled **Code changed — rerun**; every later Python cell that holds a result picks up **Earlier cells changed — rerun**, because running an earlier cell — or inserting, deleting, moving or duplicating one — can change the values everything below it was built on. A result from a kernel session that no longer exists is labelled **Previous session**, which is what you see after switching kernels or restarting one. Rerunning a cell clears its own label and leaves the ones below it alone.
+
+Leaving the notebook keeps its session. Open a table, another tab or another page, reload the app or save the notebook, and its variables are still there when you come back; a cell that was running carries on and shows its result. They stay on the kernel until you close the notebook's tab, reset the session or stop the kernel. A kernel holds its 20 most recently used sessions, flow runs included, and drops the oldest beyond that.
 
 **Reset session** in the **⋯** menu clears this notebook's variables on the kernel without stopping it: the kernel keeps running and other notebooks keep their own variables. The outputs and the execution counter are cleared with the variables, and a reset that fails says so rather than pretending to have worked. A response that arrives after a reset or a kernel switch is discarded instead of being written into the cell, so a slow run can never make an outdated output look current.
 
@@ -53,6 +55,26 @@ When using `flowfile_frame` in a Catalog notebook, cloud-backed physical tables 
 ![A catalog notebook cell running flowfile_ctx.read_catalog_table, then display and explore, with the interactive table and Graphic Walker explorer rendering live beneath the cell](../../../assets/images/guides/notebooks/notebook-in-action.gif)
 
 </details>
+
+### A table kept by another catalog
+
+A table of a [catalog from elsewhere](index.md#a-catalog-from-elsewhere), such as `orders` in the schema `sales` of
+a catalog Flowfile calls `polaris`, is read in a cell with the two lines its table panel shows:
+
+```python
+import flowfile as ff
+orders = ff.read_catalog_table("orders", namespace_full_name="polaris.sales")
+```
+
+When the table cannot be read (a mistyped name, a schema you have no access to), the cell says why in one sentence.
+`flowfile_ctx.read_catalog_table("polaris.sales.orders")` reads the same rows.
+`ff.get_catalog("polaris").get_schema("sales").list_tables()` lists the tables the other catalog has in that schema
+now, asked each time it runs, and `ff.get_catalog("polaris").list_tables()` those of every schema.
+
+Each run of the cell reads the table as it is now, as a snapshot of the whole table that Flowfile writes for the
+kernel, so a very large table is better read in a flow. The kernel never gets the catalog's sign-in. On a shared
+server such a table is read in a flow, not in this notebook. Such a table is written by a flow, with a Write to
+Catalog node.
 
 ## Versioned like flows
 

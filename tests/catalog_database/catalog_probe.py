@@ -120,6 +120,19 @@ with engine.connect() as conn:
     assert (
         MigrationContext.configure(conn).get_current_revision() == ScriptDirectory.from_config(cfg).get_current_head()
     )
+
+
+def gloss_tables() -> list[str]:
+    return sorted(n for n in inspect(engine).get_table_names() if n.startswith("gloss_"))
+
+
+# Migration 046 is the semantic ledger's one writer: glosslayer's tables come and go with it.
+ledger = gloss_tables()
+assert {"gloss_assertions", "gloss_events", "gloss_meta", "gloss_assets"} <= set(ledger), ledger
+command.downgrade(cfg, "045")
+assert gloss_tables() == []
+command.upgrade(cfg, "head")
+assert gloss_tables() == ledger
 with Session(engine) as db:
     admin = db.query(models.User).filter_by(username="catalog_admin").one()
     assert admin.is_admin
@@ -146,6 +159,23 @@ migration.run_startup_migration()
 init_db()
 with Session(engine) as db:
     assert db.query(models.User).filter_by(username="catalog_admin").count() == 1
+
+if sys.argv[1] == "populated":
+    with Session(engine) as db:
+        kept = models.CatalogNamespace(name="kept_elsewhere", level=0, owner_id=owner, kept_elsewhere=True)
+        db.add(kept)
+        db.commit()
+        db.add(models.ExternalCatalog(namespace_id=kept.id, uri="https://catalog.example/api", sign_in="none"))
+        db.commit()
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT COUNT(*) FROM catalog_namespaces WHERE kept_elsewhere = false")) >= 2
+        assert conn.scalar(text("SELECT not_shown FROM external_catalogs")) == 0
+    command.downgrade(cfg, "046")
+    assert not inspect(engine).has_table("external_catalogs")
+    assert "kept_elsewhere" not in {c["name"] for c in inspect(engine).get_columns("catalog_namespaces")}
+    command.upgrade(cfg, "047")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT COUNT(*) FROM catalog_namespaces WHERE kept_elsewhere = true")) == 0
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

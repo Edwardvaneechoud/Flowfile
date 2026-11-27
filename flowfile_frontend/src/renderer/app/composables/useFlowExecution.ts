@@ -19,6 +19,7 @@ import { useEditorStore } from "../stores/editor-store";
 import { useResultsStore } from "../stores/results-store";
 import { useFlowSyncStore } from "../stores/flow-sync-store";
 import { useTutorialStore } from "../stores/tutorial-store";
+import { useCatalogStore } from "../stores/catalog-store";
 import { useMergeConflictsStore } from "../stores/merge-conflicts-store";
 import { runRefusedMessage, unresolvedConflictsOf } from "../features/designer/mergeConflicts";
 import { VueFlowStore } from "@vue-flow/core";
@@ -473,6 +474,11 @@ export function useFlowExecution(
         editorStore.isRunning = false;
         editorStore.isCanceled = false;
         isExecuting.value = false;
+      }
+      try {
+        useCatalogStore().markExternalTablesStale();
+      } catch (error) {
+        console.error("Could not mark the catalog's outside tables stale:", error);
       }
       if (!notified) {
         notified = true;

@@ -17,6 +17,7 @@ import { resetCatalogRefCache } from "./catalogRefResolver";
 import {
   beginExecution,
   bumpSessionEpoch,
+  cellRuntime,
   disposeOwner,
   endBatch,
   settleExecution,
@@ -319,5 +320,73 @@ describe("attachDataframeSchemas", () => {
 
     expect(mockSchemas).not.toHaveBeenCalled();
     expect(getSchemas(OWNER)).toBeNull();
+  });
+});
+
+describe("the session found on reopening", () => {
+  const stale = () => cellRuntime(OWNER, "cell-a")!.staleReason;
+
+  /** A cell that ran in namespace g1 while no panel was attached, as after leaving the notebook. */
+  beforeEach(() => {
+    settleExecution(beginExecution(OWNER, "cell-a"), { namespace_generation: "g1", revision: 1 });
+  });
+
+  const reopen = async () => {
+    attachDataframeSchemas(OWNER, getCtx);
+    await refresh(OWNER);
+  };
+
+  it("the same one leaves results current", async () => {
+    await reopen();
+    expect(stale()).toBeNull();
+  });
+
+  it("another one marks results previous-session", async () => {
+    mockSchemas.mockResolvedValue(ready([], "g2"));
+    await reopen();
+    expect(stale()).toBe("previous-session");
+  });
+
+  it("a kernel that answers it holds none marks results previous-session", async () => {
+    mockSchemas.mockResolvedValue({ ...unavailable(), answered: true });
+    await reopen();
+    expect(stale()).toBe("previous-session");
+  });
+
+  it("a kernel that could not be asked marks nothing", async () => {
+    mockSchemas.mockResolvedValue(unavailable());
+    await reopen();
+    expect(stale()).toBeNull();
+  });
+
+  it("the same one still running a cell marks nothing", async () => {
+    mockSchemas.mockResolvedValue(busy());
+    await reopen();
+    expect(stale()).toBeNull();
+  });
+
+  it("an answer overtaken by a run is ignored", async () => {
+    let answer!: (v: unknown) => void;
+    mockSchemas.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    const reopened = reopen();
+    await tick();
+    settleExecution(beginExecution(OWNER, "cell-a"), { namespace_generation: "g2", revision: 1 });
+    answer({ ...unavailable(), answered: true });
+    await reopened;
+    expect(stale()).toBeNull();
+  });
+
+  it("an answer during a run is ignored, so the run's own result stays current", async () => {
+    let answer!: (v: unknown) => void;
+    mockSchemas.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    const reopened = reopen();
+    await tick();
+    const batch = startBatch(OWNER, ["cell-a"])!;
+    const ticket = beginExecution(OWNER, "cell-a");
+    answer(busy("g2"));
+    await reopened;
+    expect(settleExecution(ticket, { namespace_generation: "g2", revision: 1 })).toBe("apply");
+    endBatch(OWNER, batch);
+    expect(stale()).toBeNull();
   });
 });

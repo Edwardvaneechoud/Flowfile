@@ -9,6 +9,7 @@ from shared.polars_code_parser import (
     function_form,
     function_form_error,
     polars_code_parser,
+    refuse_in_process_on_server,
     remove_comments_and_docstrings,
     unrunnable_def_error,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "function_form",
     "function_form_error",
     "polars_code_parser",
+    "refuse_in_process_on_server",
     "remove_comments_and_docstrings",
     "unrunnable_def_error",
 ]

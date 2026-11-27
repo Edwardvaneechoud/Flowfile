@@ -323,6 +323,7 @@ NON_GRAPH_ROUTES = {
     "/editor/code_to_flowframe/exported",
     "/editor/code_to_project/save",
     "/files/create_directory",
+    "/files/delete",
     "/flow/register/",
     "/node/trigger_fetch_data",
     "/flow/run/",

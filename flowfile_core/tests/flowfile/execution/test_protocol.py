@@ -42,6 +42,7 @@ def test_the_operation_set_is_exactly_the_supported_kinds():
         "rest_api_read",
         "database_write",
         "cloud_write",
+        "iceberg_write",
         "file_write",
         "file_read",
         "fuzzy_join",

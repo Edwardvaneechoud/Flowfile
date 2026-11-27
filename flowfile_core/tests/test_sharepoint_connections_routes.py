@@ -43,12 +43,12 @@ def saved_connection(monkeypatch):
     monkeypatch.setitem(app.dependency_overrides, get_db, database)
     monkeypatch.setitem(app.dependency_overrides, get_current_active_user, lambda: SimpleNamespace(id=1))
     try:
-        migration = import_module("flowfile_core.alembic.versions.046_sharepoint_connections")
+        migration = import_module("flowfile_core.alembic.versions.048_sharepoint_connections")
         with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
             migration.upgrade()
-            import_module("flowfile_core.alembic.versions.047_sharepoint_connection_ids").upgrade()
-            import_module("flowfile_core.alembic.versions.048_sharepoint_project_identity").upgrade()
-            import_module("flowfile_core.alembic.versions.049_sharepoint_excel_preview").upgrade()
+            import_module("flowfile_core.alembic.versions.049_sharepoint_connection_ids").upgrade()
+            import_module("flowfile_core.alembic.versions.050_sharepoint_project_identity").upgrade()
+            import_module("flowfile_core.alembic.versions.051_sharepoint_excel_preview").upgrade()
         with Session(engine) as db:
             db.add(User(id=1, username="owner"))
             db.commit()
@@ -134,18 +134,18 @@ def test_sqlite_upgrade_preserves_saved_connections_and_does_not_reuse_ids(tmp_p
             db.execute(User.__table__.insert().values(id=7, username="owner"))
             db.execute(Secret.__table__.insert().values(id=11, user_id=7, encrypted_value="opaque-fixture"))
             with Operations.context(MigrationContext.configure(db)):
-                import_module("flowfile_core.alembic.versions.046_sharepoint_connections").upgrade()
+                import_module("flowfile_core.alembic.versions.048_sharepoint_connections").upgrade()
             old_table = Table(table.name, MetaData(), autoload_with=db)
             db.execute(old_table.insert().values(id=42, **saved))
 
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
-            import_module("flowfile_core.alembic.versions.047_sharepoint_connection_ids").upgrade()
+            import_module("flowfile_core.alembic.versions.049_sharepoint_connection_ids").upgrade()
             db.execute(old_table.insert().values(id=99, **saved))
             db.execute(old_table.delete().where(old_table.c.id == 99))
-            import_module("flowfile_core.alembic.versions.048_sharepoint_project_identity").upgrade()
-            import_module("flowfile_core.alembic.versions.049_sharepoint_excel_preview").upgrade()
-            cursor_migration = import_module("flowfile_core.alembic.versions.050_sharepoint_delta_cursor")
-            assert cursor_migration.down_revision == "049"
+            import_module("flowfile_core.alembic.versions.050_sharepoint_project_identity").upgrade()
+            import_module("flowfile_core.alembic.versions.051_sharepoint_excel_preview").upgrade()
+            cursor_migration = import_module("flowfile_core.alembic.versions.052_sharepoint_delta_cursor")
+            assert cursor_migration.down_revision == "051"
             cursor_migration.upgrade()
             cursor_table = Table("sharepoint_delta_cursors", MetaData(), autoload_with=db)
             db.execute(cursor_table.insert().values(scope="a" * 64, state="fixture-state"))

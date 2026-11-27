@@ -336,6 +336,21 @@ def plan_loads_refused() -> bool:
     return os.environ.get("FLOWFILE_MODE", "electron") in ("docker", "server")
 
 
+IN_PROCESS_REFUSED_MESSAGE = "On a multi-user server Polars Code runs on a kernel, never in a server process."
+
+
+def refuse_in_process_on_server() -> None:
+    """Raise ``IN_PROCESS_REFUSED_MESSAGE`` on a multi-user server, the mode ``plan_loads_refused`` reads.
+
+    The sandbox limits the names code can use, which is no boundary for code that means to leave it, so the
+    processes that hold a server's secrets (core, the worker, a run's children) call this before they run Polars
+    Code. A kernel's environment has no ``FLOWFILE_MODE``, so the same sandbox runs the code in the person's own
+    kernel.
+    """
+    if plan_loads_refused():
+        raise PermissionError(IN_PROCESS_REFUSED_MESSAGE)
+
+
 _PLAN_BYTE_KEYS = frozenset({"List", "Series", "Binary"})
 _CALLABLE_PLAN_KEYS = frozenset({"AnonymousFunction", "callback", "Map"})
 _CALLABLE_KEY_FRAGMENTS = ("python", "opaque", "udf", "pickle", "plugin")

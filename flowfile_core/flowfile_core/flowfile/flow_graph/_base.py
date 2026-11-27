@@ -51,6 +51,7 @@ class GraphMixinBase:
         _kernel_hold: KernelHold | None
         _commit_sources: bool
         _owner_user_id: int | None
+        _session_user_id: int | None
         merge_conflicts: dict | None
         _node_observers: list[Callable[[int | str, str, Any, bool], None]]
         _history_manager: HistoryManager
@@ -117,6 +118,8 @@ class GraphMixinBase:
         def _serialized_comments(self) -> list[schemas.FlowfileComment]: ...
 
         def _execute_on_kernel(self, *args: Any, **kwargs: Any) -> Any: ...
+
+        def _make_blocked_prediction_callback(self, *, node_id: int, on_kernel: bool = False) -> Callable: ...
 
         def _place_user_defined_node(self, *args: Any, **kwargs: Any) -> Any: ...
 

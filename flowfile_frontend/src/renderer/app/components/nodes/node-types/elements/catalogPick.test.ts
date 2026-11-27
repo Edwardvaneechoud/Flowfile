@@ -5,14 +5,18 @@ import type { NamespaceTree } from "../../../../types/catalog.types";
 import type { CatalogWriteSettings, NodeCatalogReader } from "../../../../types/node.types";
 import {
   READ_ONLY,
+  outsideNoChanges,
+  outsideNoVersion,
   hubDefaultSchema,
   isHubTarget,
   namespaceChoice,
   namespaceOptions,
   optionGroups,
+  outsideTableChoice,
   pickable,
   readerNamespaceChoice,
   selectedNamespaceRow,
+  selectedOutsideTable,
   selectedTableRow,
   tableChoice,
   tablePlace,
@@ -20,6 +24,7 @@ import {
   writeBlock,
   writerDefault,
 } from "./catalogPick";
+import * as catalogPick from "./catalogPick";
 
 const localOrders = table({
   id: 4,
@@ -57,6 +62,25 @@ const tree: NamespaceTree[] = [
   }),
 ];
 
+// A catalog kept elsewhere, with one schema it still lists and one it no longer does.
+const polaris = ns({
+  id: 7,
+  name: "polaris",
+  kept_elsewhere: true,
+  children: [
+    ns({ id: 8, name: "sales", parent_id: 7, level: 1, kept_elsewhere: true }),
+    ns({
+      id: 9,
+      name: "old",
+      parent_id: 7,
+      level: 1,
+      kept_elsewhere: true,
+      gone_since: "2026-11-22T10:00:00",
+      unavailable_reason: "No longer in polaris's own catalog.",
+    }),
+  ],
+});
+
 const reader = (fields: Partial<NodeCatalogReader> = {}): NodeCatalogReader =>
   ({
     source: "local",
@@ -83,6 +107,25 @@ describe("namespace options", () => {
       [-20, "hub", 20],
       [-21, "hub", 21],
     ]);
+  });
+
+  it("offers a catalog kept elsewhere among this machine's, its schemas flagged", () => {
+    const options = namespaceOptions([...tree, polaris], true);
+    expect(options.map((o) => [o.label, o.source, o.keptElsewhere])).toEqual([
+      ["General / default", "local", false],
+      ["General / Local Flows", "local", false],
+      ["polaris / sales", "local", true],
+      ["polaris / old", "local", true],
+      ["Finance / raw", "hub", false],
+      ["Finance / Local Flows", "hub", false],
+    ]);
+    expect(options.find((o) => o.id === 8)).toMatchObject({ catalogId: 7, full: "polaris.sales" });
+  });
+
+  it("keeps a schema the other catalog no longer lists out of the picker", () => {
+    const options = namespaceOptions([polaris]);
+    expect(pickable(options, null).map((o) => o.full)).toEqual(["polaris.sales"]);
+    expect(pickable(options, 9).map((o) => o.full)).toEqual(["polaris.sales", "polaris.old"]);
   });
 
   it("keeps the local system schemas when asked, as the reader does", () => {
@@ -214,6 +257,77 @@ describe("hub targets", () => {
     expect(isHubTarget(writer({ source: "hub", namespace_full_name: "Finance.raw" }))).toBe(true);
     expect(isHubTarget(writer({ namespace_id: 2 }))).toBe(false);
     expect(isHubTarget(writer())).toBe(false);
+  });
+});
+
+describe("a table kept by another catalog", () => {
+  const options = namespaceOptions([...tree, polaris], true);
+  const sales = options.find((o) => o.full === "polaris.sales")!;
+
+  it("is taken by its name only: no table id and no schema id of this install's", () => {
+    const writes = outsideTableChoice(sales, "orders");
+    expect(writes).toEqual({
+      source: "local",
+      catalog_table_name: "orders",
+      catalog_full_table_name: "polaris.sales.orders",
+      catalog_table_id: null,
+      catalog_namespace_id: null,
+    });
+    const saved = { ...reader({ catalog_table_id: 4, catalog_namespace_id: 2 }), ...writes };
+    expect(Object.values(saved).filter((v) => typeof v === "number")).toEqual([]);
+    expect(readerNamespaceChoice(sales)).toEqual({ source: "local", catalog_namespace_id: null });
+  });
+
+  it("finds a saved reader's schema and table again by that name", () => {
+    const saved = reader(outsideTableChoice(sales, "orders"));
+    expect(selectedOutsideTable(saved, options)).toEqual({ option: sales, name: "orders" });
+    expect(selectedNamespaceRow(saved, options)).toBe(sales);
+    expect(selectedTableRow(saved, [localOrders])).toBeNull();
+    const byNameOnly = reader({ catalog_full_table_name: "polaris.sales.orders" });
+    expect(selectedOutsideTable(byNameOnly, options)?.name).toBe("orders");
+  });
+
+  it("finds a reader that names the table by its schema's id and the table's name, as core does", () => {
+    const byId = reader({ catalog_namespace_id: sales.id, catalog_table_name: "orders" });
+    expect(selectedOutsideTable(byId, options)).toEqual({ option: sales, name: "orders" });
+    const byIdAndShortName = reader({
+      catalog_namespace_id: sales.id,
+      catalog_full_table_name: "orders",
+    });
+    expect(selectedOutsideTable(byIdAndShortName, options)?.name).toBe("orders");
+    expect(selectedOutsideTable(reader({ catalog_namespace_id: sales.id }), options)).toBeNull();
+  });
+
+  it("never takes a local table's name for one kept elsewhere", () => {
+    expect(selectedOutsideTable(reader(tableChoice(localOrders)), options)).toBeNull();
+    const localName = reader({ catalog_full_table_name: "General.default.orders" });
+    expect(selectedOutsideTable(localName, options)).toBeNull();
+    expect(selectedOutsideTable(reader(tableChoice(hubSales)), options)).toBeNull();
+  });
+
+  it("gives the writer the schema by its name only, and finds it again by that name", () => {
+    const writes = namespaceChoice(sales);
+    expect(writes).toEqual({
+      source: "local",
+      namespace_id: null,
+      namespace_full_name: "polaris.sales",
+    });
+    expect(selectedNamespaceRow(writer(writes), options)).toBe(sales);
+    expect(isHubTarget(writer(writes))).toBe(false);
+  });
+
+  it("warns a saved reader that asks for changes or a version in core's own words", () => {
+    // flowfile_core external_catalogs.outside_read_refusal words a refused run the same.
+    expect(outsideNoChanges("polaris")).toBe(
+      "polaris keeps this table. Flowfile can read it only as it is now; reading its changes is not available there.",
+    );
+    expect(outsideNoVersion("polaris")).toBe(
+      "polaris keeps this table. Flowfile can read it only as it is now; reading it at a version is not available there.",
+    );
+  });
+
+  it("exports no sentence about SQL mode", () => {
+    expect(Object.keys(catalogPick)).not.toContain("OUTSIDE_NO_SQL");
   });
 });
 

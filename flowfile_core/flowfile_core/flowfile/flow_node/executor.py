@@ -12,6 +12,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 
 from flowfile_core.configs import settings
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.flowfile.execution.context import (
     DEFAULT_PREVIEW_ROWS,
     ExecutionContext,
@@ -465,7 +466,15 @@ class NodeExecutor:
             # Idempotent: recomputes the pattern from the ${param}-substituted path.
             received_file.set_absolute_filepath()
 
-        return self._snapshot_source(self._get_source_path())
+        path = self._get_source_path()
+        if path and not is_url(path):
+            try:
+                workspace.require_data_paths(
+                    workspace.running_person(getattr(self.node.setting_input, "user_id", None)), path, expand_glob=True
+                )
+            except PermissionError:
+                return None
+        return self._snapshot_source(path)
 
     def _snapshot_source(self, path: str | None) -> SourceFileInfo | None:
         """Fingerprint *path* for change detection: an aggregate in directory mode, a single stat otherwise."""

@@ -530,13 +530,15 @@ def polars_code(
     """Run a Polars Code node's code once over its input plans, for ``POST /v1/ops/polars_code``.
 
     The code runs in the ``shared.polars_code_parser`` sandbox over the plans of *inputs*, in order, and its result
-    is queued as ``_user_code_result`` reports it. *polars_serializable_object* is not read.
+    is queued as ``_user_code_result`` reports it. *polars_serializable_object* is not read. On a multi-user server
+    the job fails with ``PermissionError`` before anything is loaded: the code runs on a kernel there.
     """
-    from shared.polars_code_parser import polars_code_parser
+    from shared.polars_code_parser import polars_code_parser, refuse_in_process_on_server
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting Polars code over {len(inputs)} inputs")
     try:
+        refuse_in_process_on_server()
         frames = [_load_plan(plan) for plan in inputs]
         result = polars_code_parser.get_executable(code, num_inputs=len(inputs))(*frames)
         reported = _user_code_result(result, file_path)
@@ -807,6 +809,40 @@ def write_to_sharepoint(polars_serializable_object, progress, error_message, que
             progress.value = 100
     except BaseException as e:
         get_worker_logger(flowfile_flow_id, flowfile_node_id).error(f"Error during SharePoint write operation: {e}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+
+
+def write_iceberg(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    table: dict,
+    mode: str,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+) -> None:
+    """Append the plan's rows to an Iceberg table or replace them, with the keys its catalog hands this child.
+
+    ``table`` is an ``IcebergTableRef``'s fields: the catalog's address and warehouse, the table's name and at most
+    the ``$ffsec$`` ciphertext of a token, decrypted here.
+    """
+    from shared.iceberg_utils import IcebergTableRef, write_iceberg_table
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    try:
+        ref = IcebergTableRef(**table)
+        write_iceberg_table(
+            ref, _load_plan(polars_serializable_object), mode, flow_id=flowfile_flow_id, node_id=flowfile_node_id
+        )
+        flowfile_logger.info(f"Wrote {ref.table} ({mode})")
+        with progress.get_lock():
+            progress.value = 100
+    except BaseException as e:
+        flowfile_logger.error(f"Error during the Iceberg write: {str(e)}")
         record_task_failure(error_message, progress, e, limit=1024)
         if not isinstance(e, Exception):
             raise

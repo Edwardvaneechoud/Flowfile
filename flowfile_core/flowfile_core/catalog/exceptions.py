@@ -45,6 +45,15 @@ class NestingLimitError(CatalogError):
         super().__init__("Cannot nest deeper than catalog -> schema")
 
 
+class KeptElsewhereError(CatalogError):
+    """Raised when something would be saved into, added to or removed from a catalog another provider keeps."""
+
+    def __init__(self, name: str, action: str):
+        self.name = name
+        self.action = action
+        super().__init__(f"'{name}' is kept by another catalog: Flowfile shows it and does not {action}.")
+
+
 class NamespaceNotEmptyError(CatalogError):
     """Raised when trying to delete a namespace that still has children, flows, or tables."""
 
@@ -412,3 +421,16 @@ class CdcCursorsAtRiskError(CatalogError):
             "Vacuuming would remove history that change-feed cursors still point into. "
             "Reset those cursors, or vacuum anyway."
         )
+
+
+class SemanticNotFoundError(CatalogError):
+    """Raised when a semantic-model subject or fact is unknown, or outside what the caller may read."""
+
+
+class SemanticConflictError(CatalogError):
+    """Raised when a semantic-model change conflicts with what is stored: a status that cannot take the action,
+    a group decided as a unit, or a metric name already in the model."""
+
+
+class SemanticValueError(CatalogError):
+    """Raised when a proposed semantic-model value is invalid (a missing column, a bad attribute or value)."""

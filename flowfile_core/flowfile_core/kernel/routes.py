@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.kernel.models import (
+    MANAGED_KERNEL_PREFIX,
     ArtifactPersistenceInfo,
     CleanupRequest,
     CleanupResult,
@@ -29,6 +30,7 @@ from flowfile_core.kernel.models import (
     KernelSuggestion,
     KernelUpdate,
     RecoveryStatus,
+    is_managed_kernel,
 )
 from flowfile_core.lsp.feature_flag import is_lsp_enabled
 from flowfile_core.lsp.models import (
@@ -42,6 +44,22 @@ from flowfile_core.lsp.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+RESERVED_ID_MESSAGE = (
+    f"Kernel ids that start with '{MANAGED_KERNEL_PREFIX}' are reserved for the kernels Flowfile creates "
+    "for Polars Code. Choose another id."
+)
+
+
+class KernelDataframeSchemas(DataframeSchemasResponse):
+    """The kernel's dataframe schemas as core answers them.
+
+    ``answered`` is core's own, so it is not on the mirrored wire model: the kernel replied, so an empty
+    ``namespace_generation`` means it holds no such namespace, where a degraded reply (kernel stopped, timed out,
+    too old) says nothing about it. It is here and not in ``kernel/models.py``, which imports nothing else of core.
+    """
+
+    answered: bool = False
 
 
 async def _get_manager():
@@ -69,6 +87,13 @@ async def list_kernels(current_user=Depends(get_current_active_user)):
 
 @router.post("/", response_model=KernelInfo)
 async def create_kernel(config: KernelConfig, current_user=Depends(get_current_active_user)):
+    """Create a kernel for the caller.
+
+    An id in the namespace of the kernels Flowfile creates itself is a 422: whoever took a person's Polars Code
+    kernel id before their first run would keep their Polars Code from running.
+    """
+    if is_managed_kernel(config.id):
+        raise HTTPException(status_code=422, detail=RESERVED_ID_MESSAGE)
     manager = await _get_manager()
     try:
         return await manager.create_kernel(config, user_id=current_user.id)
@@ -510,13 +535,14 @@ async def lsp_diagnostics(kernel_id: str, request: LspRequest, current_user=Depe
     return DiagnosticsResponse(**(await _lsp_forward(kernel_id, "diagnostics", request, current_user) or {}))
 
 
-@router.post("/{kernel_id}/lsp/dataframe_schemas", response_model=DataframeSchemasResponse)
+@router.post("/{kernel_id}/lsp/dataframe_schemas", response_model=KernelDataframeSchemas)
 async def lsp_dataframe_schemas(
     kernel_id: str,
     request: DataframeSchemasRequest,
     current_user=Depends(get_current_active_user),
 ):
-    return DataframeSchemasResponse(**(await _lsp_forward(kernel_id, "dataframe_schemas", request, current_user) or {}))
+    answer = await _lsp_forward(kernel_id, "dataframe_schemas", request, current_user) or {}
+    return KernelDataframeSchemas(**answer, answered=bool(answer))
 
 
 @router.get("/{kernel_id}/display_outputs")

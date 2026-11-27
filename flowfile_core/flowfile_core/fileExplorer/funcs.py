@@ -14,6 +14,57 @@ from shared.path_utils import contained_path
 from shared.storage_config import storage
 
 
+class LeftOut:
+    """Folders inside a root that are neither listed nor entered.
+
+    A path is left out when it is one of the folders or lies under one, by its resolved text or by file identity,
+    so a spelling in other letter case on a disk that ignores case names the same folder. Each folder is stat'ed
+    once, when this is made, and each folder between a path and the root is compared with them once.
+    """
+
+    def __init__(self, root: str | os.PathLike, folders: list[str | os.PathLike] | None = None):
+        self.root = os.path.realpath(root)
+        self.folders = tuple(os.path.realpath(folder) for folder in folders or ())
+        self._prefixes = tuple(folder + os.sep for folder in self.folders)
+        self._identities = set()
+        for folder in self.folders:
+            try:
+                found = os.stat(folder)
+            except OSError:
+                continue
+            self._identities.add((found.st_dev, found.st_ino))
+        self._under: dict[str, bool] = {}
+
+    def holds(self, real: str) -> bool:
+        """Whether ``real``, a resolved path under the root, is left out."""
+        if not self.folders:
+            return False
+        if real in self.folders or real.startswith(self._prefixes):
+            return True
+        if not self._identities:
+            return False
+        return self._is_one(real) or self._lies_under_one(os.path.dirname(real))
+
+    def _is_one(self, path: str) -> bool:
+        try:
+            found = os.stat(path)
+        except OSError:
+            return False
+        return (found.st_dev, found.st_ino) in self._identities
+
+    def _lies_under_one(self, folder: str) -> bool:
+        """Whether ``folder`` or a folder above it, below the root, is one of the folders; kept per folder."""
+        known = self._under.get(folder)
+        if known is not None:
+            return known
+        if folder == self.root or not folder.startswith(self.root):
+            return False
+        above = os.path.dirname(folder)
+        found = self._is_one(folder) or (above != folder and self._lies_under_one(above))
+        self._under[folder] = found
+        return found
+
+
 class DirectoryScanCancelledError(Exception):
     """Raised when a directory walk is abandoned because ``cancel_check`` fired."""
 
@@ -88,7 +139,11 @@ class SecureFileExplorer:
     """File explorer with sandbox enforcement to prevent directory traversal."""
 
     def __init__(
-        self, start_path: str | Path, sandbox_root: str | Path | None = None, use_relative_paths: bool = False
+        self,
+        start_path: str | Path,
+        sandbox_root: str | Path | None = None,
+        use_relative_paths: bool = False,
+        excluded: list[str | Path] | None = None,
     ):
         """Initialize SecureFileExplorer with sandboxing.
 
@@ -98,6 +153,7 @@ class SecureFileExplorer:
                          If None, the filesystem roots bound it (``_local_filesystem_roots``).
             use_relative_paths: If True, FileInfo will contain relative paths;
                                if False (default), contains absolute paths
+            excluded: Folders inside the sandbox that are neither listed nor entered, symlinks resolved.
         """
         self.use_relative_paths = use_relative_paths
 
@@ -105,6 +161,7 @@ class SecureFileExplorer:
             self.sandbox_root = Path(sandbox_root).expanduser().resolve()
         else:
             self.sandbox_root = None
+        self._left_out = LeftOut(self.sandbox_root, excluded) if excluded and self.sandbox_root is not None else None
 
         initial = self._contain(os.path.expanduser(str(start_path)))
         if initial is None:
@@ -117,17 +174,21 @@ class SecureFileExplorer:
         for root in roots:
             contained = contained_path(root, candidate)
             if contained is not None:
-                return contained
+                return None if self._is_excluded(contained) else contained
         return None
 
+    def _is_excluded(self, real: str) -> bool:
+        return self._left_out is not None and self._left_out.holds(real)
+
     def _is_path_safe(self, path: Path) -> bool:
-        """Check if a path is within the sandbox root, symlinks resolved.
+        """Check if a path is within the sandbox root and outside the excluded folders, symlinks resolved.
 
         Returns True if no sandbox is set (no restrictions).
         """
         if self.sandbox_root is None:
             return True
-        return contained_path(self.sandbox_root, path) is not None
+        contained = contained_path(self.sandbox_root, path)
+        return contained is not None and not self._is_excluded(contained)
 
     def _sanitize_path(self, path: str | Path) -> Path | None:
         """Resolve *path* (relative ones against the current directory), or None when it would escape the sandbox."""

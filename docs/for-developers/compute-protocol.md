@@ -175,13 +175,15 @@ The worker materialises when `must_materialise or (wide and (preview_rows is not
 | `random_split` | one reference per split |
 | `custom_node` | one reference per named output |
 | `ml_train` | the model as a `blob` reference, its digest in `metadata` |
-| `file_write`, `database_write`, `cloud_write` | nothing |
+| `file_write`, `database_write`, `cloud_write`, `iceberg_write` | nothing; `iceberg_write` names a table and its REST catalog, and the compute asks the catalog for the table's keys |
 | `delta_write`, `delta_merge`, `delta_scd2` | the Delta version and counts as `metadata` |
 | `viz_session` | the visualisation session's answer as `metadata` |
 
 With the protocol on, every kind except the three Delta kinds and `viz_session` goes to `POST /v1/ops/{kind}`. Those four stay on the worker's task routes (`/submit_query/`, `/catalog/visualize_*`).
 
 **User code runs on the backend, never in core.** A Polars Code node's code is the `polars_code` payload, and a SQL Query node's statement is the `sql_query` payload, its inputs registered as `input_1`, `input_2`, … in a `pl.SQLContext`. The backend that holds the inputs runs it once and answers a reference carrying the resulting schema, so eager code and side effects behave as they would in a script on that host. The designer predicts the schema with the same operation over empty frames. A result over sources is held deferred; one over rows in memory is written and held as a file, so no rows travel to core. With the protocol off, core runs both itself to build a plan.
+
+**On a multi-user server Polars Code runs in no server process.** The sandbox cannot hold code that means to leave it, so with `FLOWFILE_MODE` docker or server the node's builder runs the code on a kernel of the person the node is stamped with (`kernel/polars_code.py`), in both flag states, and its columns are known once it has run, like any kernel node's. That kernel's id is `polars-code-<user id>`, and `POST /kernels/` answers 422 for any id under that prefix, so nobody takes a person's id before their first run. `requirements_for` then answers a kernel node's requirements for it, and `execute_polars_code` and the worker's `polars_code` job raise `PermissionError` before anything is loaded, which is the node's failure for a core elsewhere that sends such a worker the job. The worker still declares `polars_code`: core keeps a backend's capabilities for the life of the process, so they do not depend on the mode.
 
 **A fitted model is a `blob` result**, addressed, checked and released like any reference and never sampled, counted or planned over. Publishing it to the catalog is `export` to the artifact store's upload target; using a catalog model is `import_uri` of its download source. Core writes the catalog row and never carries the bytes. `flowfile_core/artifacts/publish.py` holds the two moves: `publish_result` has the backend `export` the held model to the store's upload target, then writes the version; `fetch_artifact` answers the blob the backend's `import_uri(kind="blob")` holds from the store's download source. The URI is a `file://` path or a presigned URL, never a credential. `plan_for`, `sample` and `count` refuse a blob with `OperationUnsupported`.
 
@@ -239,7 +241,7 @@ class Placement:
 | a plugin | its expressions use one; every formula node needs `polars_ds` and `polars_expr_transformer` | lacks it, has another version, or cannot load it |
 | Python functions in its plan | it is a formula node (formula, multi-field formula, advanced filter, formula gate, formula rename) or a cloud or catalog change read | failed the handshake's Python probe |
 | an operation kind | it runs one; Explore Data needs `viz_session` | does not declare it |
-| the kernel shared volume | it runs on a notebook kernel | does not write `file` |
+| the kernel shared volume | it runs on a kernel: Python Script, a kernel custom node, or Polars Code on a multi-user server | does not write `file` |
 | a stored connection | it names one whose method holds a credential (anything but `env_vars` and `managed_identity`) | resolves storage with its own identity (`credential_resolution="ambient"`) |
 
 `requirements_for` does no I/O: a catalog node's scheme and connection, and a model node's artifact scheme, come from the target its caller resolves. `place` reads each node's settings with the flow's parameters resolved, through a copy, so `${dir}/x.csv` is placed by what `dir` resolves to, and a node whose needs cannot be read from its resolved settings is refused before the run starts.

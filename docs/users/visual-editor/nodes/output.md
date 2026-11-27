@@ -187,6 +187,20 @@ The **Virtual Table** tab creates a [virtual flow table](../catalog/virtual-tabl
 !!! warning "Flow registration required"
     Virtual tables require the flow to be registered in the catalog. If it is not, the virtual write fails — open the flow from the catalog, or register it first.
 
+### A table kept by another catalog
+
+When an Iceberg REST catalog is [added to Flowfile's catalog](../catalog/index.md#a-catalog-from-elsewhere), its schemas are offered under **Catalog / Schema** too. Type the table's name; the table is created when it does not exist yet.
+
+Such a table is the other catalog's, and Flowfile can only add to it or replace it, so **Write mode** offers **Overwrite** and **Append**. Error if exists, Upsert, Update, Delete and SCD2 are greyed out, as are the **Virtual Table** tab, **Track changes** and **Partition by**. Each says why when you hover over it, for example *polaris keeps this table. Flowfile can Append to it or Overwrite it; Upsert is not available there.* A run that asks for one of them (a flow built in Python, say) fails with the same sentence. A writer saved with one of those modes is set to Overwrite when it is pointed at such a schema, and the drawer says so.
+
+A write never changes the table's columns or partitioning: the data must have the table's columns, and is cast to the table's types. Writes go to tables of Iceberg format version 2; a version 3 table is refused before any file is written. After the run the table's panel in the catalog shows the new commit's time and names this flow under **Written by**.
+
+In Python:
+
+```python
+ff.write_catalog_table(orders, "orders_copy", namespace_full_name="polaris.sales", write_mode="append")
+```
+
 ## ![Explore data](../../../assets/images/nodes/explore_data.svg){ width="44" height="44" } Explore data
 
 Opens an interactive drag-and-drop chart builder (powered by [Graphic Walker](https://github.com/Kanaries/graphic-walker)) on the node's input. Drag columns onto the x and y axes, colour and size shelves to build bar, line, scatter and other charts — nothing to configure up front and no code. Chart configurations are saved with the node, so they survive reopening the flow.

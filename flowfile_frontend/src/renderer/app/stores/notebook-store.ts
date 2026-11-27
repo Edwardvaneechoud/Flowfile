@@ -102,6 +102,12 @@ export function notebookSessionId(persistedId: number): number {
   return persistedId > 0 ? -persistedId : -(1_000_000_000 - persistedId);
 }
 
+/** A saved notebook's own namespace, or a fresh one while an open tab runs in it (a copy saved from that notebook). */
+function freeSessionId(persistedId: number, open: OpenNotebook[]): number {
+  const own = notebookSessionId(persistedId);
+  return open.some((n) => n.sessionFlowId === own) ? newEphemeralSessionId() : own;
+}
+
 /** A hub's notebook keeps no kernel: a kernel belongs to the machine the notebook is opened on. */
 const savedKernelId = (targetId: number | null, kernelId: string | null): string | null =>
   targetId != null && targetId < 0 ? null : kernelId;
@@ -650,7 +656,8 @@ function hydrateTab(p: PersistedNotebook): OpenNotebook {
     tabId: p.tabId,
     persistedId: p.persistedId,
     sessionFlowId:
-      p.persistedId != null ? notebookSessionId(p.persistedId) : newEphemeralSessionId(),
+      p.sessionFlowId ??
+      (p.persistedId != null ? notebookSessionId(p.persistedId) : newEphemeralSessionId()),
     name: p.name,
     description: p.description,
     namespaceId: p.namespaceId,
@@ -713,6 +720,7 @@ export const useNotebookStore = defineStore("notebook", {
           .map((n) => ({
             tabId: n.tabId,
             persistedId: n.persistedId,
+            sessionFlowId: n.sessionFlowId,
             name: n.name,
             description: n.description,
             namespaceId: n.namespaceId,
@@ -817,7 +825,7 @@ export const useNotebookStore = defineStore("notebook", {
         const tab: OpenNotebook = {
           tabId: uid("tab"),
           persistedId: nb.id,
-          sessionFlowId: notebookSessionId(nb.id),
+          sessionFlowId: freeSessionId(nb.id, this.openNotebooks),
           name: nb.name,
           description: nb.description,
           namespaceId: nb.namespace_id,
@@ -954,7 +962,6 @@ export const useNotebookStore = defineStore("notebook", {
           default_kernel_id: savedKernelId(namespaceId, nb.kernelId),
         });
         nb.persistedId = created.id;
-        nb.sessionFlowId = notebookSessionId(created.id);
         nb.name = created.name;
         nb.namespaceId = created.namespace_id;
         nb.dirty = false;
@@ -1600,19 +1607,6 @@ export const useNotebookStore = defineStore("notebook", {
         await NotebookApi.interruptSession(key);
       } catch (e) {
         nb.notice = { tone: "error", message: detailMessage(e, INTERRUPT_FAILED) };
-      }
-    },
-
-    /** Free every open catalog notebook's kernel namespace (don't leak them into the
-     * 20-slot LRU shared with flow runs). Called when the panel unmounts; flow tabs
-     * hold no kernel namespace. */
-    async closeAllSessions() {
-      for (const nb of this.openNotebooks.filter((n) => n.flowId == null)) {
-        // The namespace is gone, so nothing still on screen can be current.
-        bumpSessionEpoch(ownerOf(nb));
-        if (nb.kernelId) {
-          await KernelApi.clearNamespace(nb.kernelId, nb.sessionFlowId).catch(() => undefined);
-        }
       }
     },
   },

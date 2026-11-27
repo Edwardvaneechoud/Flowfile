@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.26.0"
+version = "0.27.0-alpha.3"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -67,7 +67,7 @@ pyiceberg = {extras = ["hadoop"], version = "^0.12.0"}
 boto3 = ">=1.38.40,<1.38.47"
 cryptography = ">=48.0.1,<49.0.0"  # 49 drops x86_64 macOS wheels (Intel Mac pip installs)
 httpx = "^0.28.1"
-docker = ">=7.0.0"
+docker = ">=7.2.0"
 tqdm = "^4.67.1"
 s3fs = ">=2026.6.0"  # fsspec <2026.6.0 renders reference-FS JSON through unsandboxed jinja2 (CVE-2026-104851)
 pl-fuzzy-frame-match = ">=0.7.0"
@@ -80,6 +80,8 @@ gcsfs = ">=2026.6.0"
 google-analytics-data = ">=0.18.0"
 alembic = "^1.13.0"
 sqlalchemy = "^2.0.27"
+glosslayer = ">=0.2.0,<0.3"
+glosslayer-flowfile = ">=0.2.0,<0.3"
 greenlet = ">=3.0"  # SQLAlchemy 2.1 no longer brings it, and polars' read_database needs its asyncio module
 litellm = "^1.83.14"
 filelock = "^4.2.1"
@@ -187,6 +189,7 @@ markers = [
     "cloud_e2e: Real core + worker processes driven over HTTP against MinIO (Docker)",
     "snowflake: Tests against a live Snowflake account (opt-in via FLOWFILE_TEST_SNOWFLAKE_* env vars)",
     "sharepoint: Tests against a dedicated live SharePoint site (opt-in via FLOWFILE_TEST_SHAREPOINT_* env vars)",
+    "iceberg_rest: Tests against a running Iceberg REST catalog on MinIO (python -m test_utils.iceberg_rest start); skip without it",
 ]
 
 [tool.coverage.run]

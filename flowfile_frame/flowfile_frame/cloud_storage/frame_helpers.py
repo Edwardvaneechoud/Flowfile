@@ -14,10 +14,39 @@ if TYPE_CHECKING:
     from flowfile_frame.flow_frame import FlowFrame
 
 
+def _iceberg_catalog(
+    file_format: str,
+    uri: str | None,
+    warehouse: str | None,
+    token_secret: str | None,
+    catalog: str | None = None,
+) -> cloud_storage_schemas.IcebergCatalogSettings | None:
+    """The catalog block of an Iceberg node; the catalog keywords are refused with any other format."""
+    if file_format != "iceberg":
+        if uri or warehouse or token_secret or catalog:
+            raise ValueError(
+                "catalog, catalog_uri, catalog_warehouse and catalog_token_secret need file_format='iceberg'"
+            )
+        return None
+    if catalog:
+        if uri or warehouse or token_secret:
+            raise ValueError(
+                "Name the catalog either by its name in Flowfile's catalog (catalog) or by its address (catalog_uri),"
+                " not both; a named catalog brings its own warehouse and sign-in."
+            )
+        return cloud_storage_schemas.IcebergCatalogSettings(catalog=catalog)
+    if not uri:
+        raise ValueError(
+            "file_format='iceberg' needs catalog_uri, the address of the table's Iceberg REST catalog, or catalog,"
+            " the name of a catalog added to Flowfile's catalog"
+        )
+    return cloud_storage_schemas.IcebergCatalogSettings(uri=uri, warehouse=warehouse, token_secret=token_secret)
+
+
 def read_from_cloud_storage(
     source: str,
     *,
-    file_format: Literal["csv", "parquet", "json", "delta"] = "parquet",
+    file_format: Literal["csv", "parquet", "json", "delta", "iceberg"] = "parquet",
     connection_name: str | None = None,
     scan_mode: Literal["single_file", "directory"] | None = None,
     delimiter: str = ";",
@@ -28,15 +57,23 @@ def read_from_cloud_storage(
     include_change_preimage: bool = False,
     description: str | None = None,
     output_field_config: input_schema.OutputFieldConfig | None = None,
+    catalog_uri: str | None = None,
+    catalog_warehouse: str | None = None,
+    catalog_token_secret: str | None = None,
+    catalog: str | None = None,
 ) -> FlowFrame:
     """Read data from cloud storage.
 
     Unified function that supports all cloud storage formats (CSV, Parquet,
-    JSON, Delta). Returns a FlowFrame for consistency with read_database()
+    JSON, Delta, Iceberg). Returns a FlowFrame for consistency with read_database()
     and read_catalog_table().
 
+    With ``file_format="iceberg"``, ``source`` is a table's name (``namespace.table``) and ``catalog`` the name of
+    a catalog added to Flowfile's catalog, or ``catalog_uri`` the address of the Iceberg REST catalog that keeps it;
+    the catalog hands out the storage keys each time the flow runs, so no connection is named.
+
     Args:
-        source: Cloud storage path (e.g., 's3://bucket/path/file.parquet').
+        source: Cloud storage path (e.g., 's3://bucket/path/file.parquet'), or an Iceberg table's name.
         file_format: File format to read.
         connection_name: Name of the stored cloud storage connection.
         scan_mode: 'single_file' or 'directory'. Auto-detected from path if None.
@@ -53,17 +90,25 @@ def read_from_cloud_storage(
             Set ``enabled=True`` and supply ``fields`` to enforce the expected
             output schema (matches the canvas-side ``output_field_config``
             knob). Construct via :class:`flowfile_frame.OutputFieldConfig`.
+        catalog_uri: The Iceberg REST catalog's address (only used for Iceberg format).
+        catalog_warehouse: The catalog's warehouse (only used for Iceberg format).
+        catalog_token_secret: The name of a stored secret holding a bearer token for the catalog (only used for
+            Iceberg format).
+        catalog: The name of a catalog kept elsewhere in Flowfile's catalog, whose address, warehouse and sign-in
+            are used (only used for Iceberg format; instead of the three ``catalog_*`` keywords).
 
     Returns:
         FlowFrame: A FlowFrame backed by a cloud storage reader node.
     """
     from flowfile_frame.flow_frame_methods import (
+        _scan_iceberg_table,
         scan_csv_from_cloud_storage,
         scan_delta,
         scan_json_from_cloud_storage,
         scan_parquet_from_cloud_storage,
     )
 
+    iceberg = _iceberg_catalog(file_format, catalog_uri, catalog_warehouse, catalog_token_secret, catalog)
     if (changes_since is not None or include_change_preimage) and file_format != "delta":
         raise ValueError("changes_since is only supported for the 'delta' file format")
 
@@ -104,6 +149,8 @@ def read_from_cloud_storage(
             description=description,
             output_field_config=output_field_config,
         )
+    elif file_format == "iceberg":
+        frame = _scan_iceberg_table(source, iceberg, description=description, output_field_config=output_field_config)
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
 
@@ -114,7 +161,7 @@ def write_to_cloud_storage(
     df: FlowFrame,
     path: str,
     *,
-    file_format: Literal["csv", "parquet", "json", "delta"] = "parquet",
+    file_format: Literal["csv", "parquet", "json", "delta", "iceberg"] = "parquet",
     connection_name: str | None = None,
     delimiter: str = ";",
     encoding: CsvEncoding = "utf8",
@@ -123,15 +170,24 @@ def write_to_cloud_storage(
     partition_by: list[str] | None = None,
     merge_keys: list[str] | None = None,
     track_changes: bool = False,
+    catalog_uri: str | None = None,
+    catalog_warehouse: str | None = None,
+    catalog_token_secret: str | None = None,
+    catalog: str | None = None,
 ) -> None:
     """Write data to cloud storage.
 
     Unified function that supports all cloud storage formats (CSV, Parquet,
-    JSON, Delta). Consistent with write_database() and write_catalog_table().
+    JSON, Delta, Iceberg). Consistent with write_database() and write_catalog_table().
+
+    With ``file_format="iceberg"``, ``path`` is a table's name (``namespace.table``) and ``catalog`` the name of a
+    catalog added to Flowfile's catalog, or ``catalog_uri`` the address of the Iceberg REST catalog that keeps it. A
+    missing table is created; ``write_mode`` is ``"overwrite"`` or
+    ``"append"``, and a table's columns and partitioning are never changed.
 
     Args:
         df: The flowframe to write.
-        path: Cloud storage destination path.
+        path: Cloud storage destination path, or an Iceberg table's name.
         file_format: File format to write.
         connection_name: Name of the stored cloud storage connection.
         delimiter: CSV delimiter (only used for CSV format).
@@ -146,7 +202,14 @@ def write_to_cloud_storage(
             (only used for Delta format).
         track_changes: Turn the table's change feed on (only used for Delta format).
             Enable-only; not allowed with ``write_mode="overwrite"``.
+        catalog_uri: The Iceberg REST catalog's address (only used for Iceberg format).
+        catalog_warehouse: The catalog's warehouse (only used for Iceberg format).
+        catalog_token_secret: The name of a stored secret holding a bearer token for the catalog (only used for
+            Iceberg format).
+        catalog: The name of a catalog kept elsewhere in Flowfile's catalog, whose address, warehouse and sign-in
+            are used (only used for Iceberg format; instead of the three ``catalog_*`` keywords).
     """
+    iceberg = _iceberg_catalog(file_format, catalog_uri, catalog_warehouse, catalog_token_secret, catalog)
     if partition_by and file_format != "delta":
         raise ValueError("partition_by is only supported for the 'delta' file format")
     if (merge_keys or track_changes) and file_format != "delta":
@@ -176,6 +239,11 @@ def write_to_cloud_storage(
             merge_keys=merge_keys,
             track_changes=track_changes,
         )
+    elif file_format == "iceberg":
+        node_id = add_write_ff_to_cloud_storage(
+            path, df.flow_graph, df.node_id, write_mode=write_mode, file_format="iceberg", iceberg_catalog=iceberg
+        )
+        df._create_child_frame(node_id)
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
 
@@ -187,7 +255,7 @@ def add_write_ff_to_cloud_storage(
     *,
     connection_name: str | None = None,
     write_mode: Literal["overwrite", "append", "error", "upsert", "update", "delete"] = "overwrite",
-    file_format: Literal["csv", "parquet", "json", "delta"] = "parquet",
+    file_format: Literal["csv", "parquet", "json", "delta", "iceberg"] = "parquet",
     csv_delimiter: str = ";",
     csv_encoding: CsvEncoding = "utf8",
     parquet_compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy",
@@ -195,7 +263,13 @@ def add_write_ff_to_cloud_storage(
     merge_keys: list[str] | None = None,
     track_changes: bool = False,
     description: str | None = None,
+    iceberg_catalog: cloud_storage_schemas.IcebergCatalogSettings | None = None,
+    catalog: str | None = None,
 ) -> int:
+    if catalog is not None:
+        if iceberg_catalog is not None:
+            raise ValueError("Give iceberg_catalog or catalog, not both.")
+        iceberg_catalog = cloud_storage_schemas.IcebergCatalogSettings(catalog=catalog)
     node_id = generate_node_id()
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCloudStorageWriter(
@@ -212,6 +286,7 @@ def add_write_ff_to_cloud_storage(
             partition_by=partition_by,
             merge_keys=merge_keys or [],
             track_changes=track_changes,
+            iceberg_catalog=iceberg_catalog,
         ),
         user_id=get_current_user_id(),
         depending_on_id=depends_on_node_id,

@@ -39,15 +39,18 @@ from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.exceptions import (
     FlowExistsError,
     FlowNotFoundError,
+    KeptElsewhereError,
     NamespaceNotFoundError,
     NotAuthorizedError,
 )
+from flowfile_core.catalog.services import external_catalogs
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, is_electron_mode
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, is_electron_mode, is_server_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.fileExplorer.funcs import (
     FileInfo,
     SecureFileExplorer,
@@ -68,6 +71,7 @@ from flowfile_core.flowfile.catalog_helpers import (
     namespace_exists,
     register_flow_in_namespace,
     require_flow_save_permitted,
+    require_registered_flows_manageable,
     resolve_display_name,
     resolve_display_names,
     resolve_source_registration_id,
@@ -201,7 +205,7 @@ def get_node_model(setting_name_ref: str):
 
 
 @router.get("/files/files_in_local_directory/", response_model=list[FileInfo], tags=["file manager"])
-async def get_local_files(directory: str) -> list[FileInfo]:
+async def get_local_files(directory: str, current_user=Depends(get_current_active_user)) -> list[FileInfo]:
     """Retrieves a list of files from a specified local directory.
 
     Args:
@@ -214,6 +218,13 @@ async def get_local_files(directory: str) -> list[FileInfo]:
         HTTPException: 404 if the directory does not exist.
         HTTPException: 403 if access is denied (path outside sandbox).
     """
+    if is_server_mode():
+        try:
+            return workspace.explorer_for(directory, current_user.id, None).list_contents()
+        except PermissionError as err:
+            raise HTTPException(403, str(err)) from None
+        except FileNotFoundError:
+            raise HTTPException(404, "Directory does not exist") from None
     explorer = SecureFileExplorer(start_path=storage.user_data_directory, sandbox_root=storage.user_data_directory)
     validated_path = explorer.get_absolute_path(directory)
     if validated_path is None:
@@ -227,9 +238,71 @@ async def get_local_files(directory: str) -> list[FileInfo]:
 
 
 @router.get("/files/default_path/", response_model=str, tags=["file manager"])
-async def get_default_path() -> str:
-    """Returns the default starting path for the file browser (user data directory)."""
-    return str(storage.user_data_directory)
+async def get_default_path(current_user=Depends(get_current_active_user)) -> str:
+    """Returns the default starting path for the file browser: the person's workspace on a server, else the user
+    data directory."""
+    return str(workspace.default_folder(current_user.id if current_user else None))
+
+
+@router.get("/files/download", tags=["file manager"])
+def download_file(path: str, current_user=Depends(get_current_active_user)) -> FileResponse:
+    """A file of a folder the file browser shows the person on a server, as a download. A 403 for a path outside
+    those folders or any path off a server, a 400 for a folder, a 404 when it is gone."""
+    if not is_server_mode():
+        raise HTTPException(403, "Files are downloaded here on a server only.")
+    place = workspace.file_folder(path, current_user.id if current_user else None)
+    if place is None:
+        raise HTTPException(403, workspace.browse_refusal(path))
+    if os.path.isdir(place):
+        raise HTTPException(400, "A folder cannot be downloaded")
+    if not os.path.isfile(place):
+        raise HTTPException(404, "File not found")
+    return FileResponse(place, filename=os.path.basename(place))
+
+
+class DeletedPath(BaseModel):
+    path: str
+    items: int
+
+
+@router.delete("/files/delete", response_model=DeletedPath, tags=["file manager"])
+def delete_path(path: str, dry_run: bool = False, current_user=Depends(get_current_active_user)) -> DeletedPath:
+    """Delete a file, or a folder with everything in it, from the person's workspace, the shared folder or the
+    uploads and outputs folders on a server (``workspace.delete_place``). ``items`` is how many files and folders
+    went with it; with ``dry_run`` that is only counted. A 403 for a top folder, a path outside those places, the
+    file of a registered flow the person may not manage (or a folder that holds one) or any path off a server, a 404
+    when nothing is there."""
+    if not is_server_mode():
+        raise HTTPException(403, "Files are deleted here on a server only.")
+    try:
+        real, link = workspace.deletable(path, current_user.id if current_user else None)
+        if not link:
+            require_registered_flows_manageable(real, current_user, "delete another person's registered flow")
+        items = workspace.delete_place(real, link, dry_run=dry_run)
+    except workspace.NotYours as err:
+        raise HTTPException(403, err.shown) from None
+    except NotAuthorizedError as err:
+        raise HTTPException(403, str(err)) from None
+    except FileNotFoundError:
+        raise HTTPException(404, "File not found") from None
+    except PermissionError:
+        raise HTTPException(403, "No permission to delete this here") from None
+    return DeletedPath(path=real, items=items)
+
+
+class BrowseRoot(BaseModel):
+    name: str
+    path: str
+
+
+@router.get("/files/roots", response_model=list[BrowseRoot], tags=["file manager"])
+async def get_browse_roots(current_user=Depends(get_current_active_user)) -> list[BrowseRoot]:
+    """The file browser's top folders (``workspace.browse_roots``): on a server the person's ``Workspace``, the
+    ``Shared`` folder where the server has one, and the flow folders it does not hold; else none."""
+    return [
+        BrowseRoot(name=root.name, path=str(root.path))
+        for root in workspace.browse_roots(current_user.id if current_user else None)
+    ]
 
 
 @router.get("/files/catalog_flows_directory/", response_model=str, tags=["file manager"])
@@ -246,7 +319,10 @@ async def get_catalog_flows_directory() -> str:
 
 @router.get("/files/directory_contents/", response_model=list[FileInfo], tags=["file manager"])
 async def get_directory_contents(
-    directory: str, file_types: list[str] = None, include_hidden: bool = False
+    directory: str,
+    file_types: list[str] = None,
+    include_hidden: bool = False,
+    current_user=Depends(get_current_active_user),
 ) -> list[FileInfo]:
     """Gets the contents of a directory path.
 
@@ -261,8 +337,10 @@ async def get_directory_contents(
 
     sandbox_root = None if is_electron_mode() else storage.user_data_directory
     try:
-        directory_explorer = SecureFileExplorer(directory, sandbox_root)
+        directory_explorer = workspace.explorer_for(directory, current_user.id, sandbox_root)
         return directory_explorer.list_contents(show_hidden=include_hidden, file_types=file_types)
+    except workspace.NotYours as err:
+        raise HTTPException(403, str(err)) from None
     except PermissionError:
         raise HTTPException(403, "Access denied: path is outside the allowed directory") from None
     except Exception as e:
@@ -271,7 +349,7 @@ async def get_directory_contents(
 
 
 @router.post("/files/create_directory", response_model=bool, tags=["file manager"])
-def create_directory(new_directory: input_schema.NewDirectory) -> bool:
+def create_directory(new_directory: input_schema.NewDirectory, current_user=Depends(get_current_active_user)) -> bool:
     """Creates the folder `dir_name` inside `source_path`, for the file browser's New folder.
 
     Args:
@@ -282,7 +360,7 @@ def create_directory(new_directory: input_schema.NewDirectory) -> bool:
         outside the allowed roots or one the server may not write a 403, and a name that is not one folder
         name a 400.
     """
-    result, error = create_dir(new_directory)
+    result, error = create_dir(new_directory, current_user.id if current_user else None)
     if result:
         return True
     if isinstance(error, HTTPException):
@@ -308,8 +386,11 @@ def register_flow(flow_data: schemas.FlowSettings, current_user=Depends(get_curr
         The ID of the newly registered flow.
     """
     user_id = current_user.id if current_user else None
+    if is_server_mode():
+        for path in {flow_data.path, flow_data.save_location} - {None, ""}:
+            workspace.checked_flow_path(path, user_id)
     try:
-        return flow_file_handler.register_flow(flow_data, user_id=user_id)
+        return flow_file_handler.register_flow(flow_data, user_id=user_id).flow_id
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
 
@@ -1628,13 +1709,19 @@ def save_generated_project(
     manifest = _export_project_manifest(request.flow_id, current_user)
     sandbox_root = None if is_electron_mode() else storage.user_data_directory
     try:
-        explorer = SecureFileExplorer(request.target_directory, sandbox_root)
+        explorer = workspace.explorer_for(request.target_directory, current_user.id, sandbox_root)
+    except workspace.NotYours as err:
+        raise HTTPException(403, str(err)) from None
     except PermissionError:
         raise HTTPException(403, "Access denied: path is outside the allowed directory") from None
     target_dir = explorer.current_path
     if not target_dir.exists() or not target_dir.is_dir():
         raise HTTPException(404, "Target directory does not exist")
     project_dir = target_dir / manifest.project_name
+    if is_server_mode():
+        for written in (project_dir, *(project_dir / file.path for file in manifest.files)):
+            if workspace.file_folder(str(written), current_user.id) is None:
+                raise HTTPException(403, workspace.browse_refusal(str(written)))
     if project_dir.exists():
         if not project_dir.is_dir():
             raise HTTPException(409, f"'{project_dir}' exists and is not a directory.")
@@ -1726,8 +1813,7 @@ def create_flow(
         elif name not in flow_path and not (name.endswith(".yaml") or name.endswith(".yml")):
             flow_path = str(Path(flow_path) / (name + ".yaml"))
     if flow_path is not None:
-        # Validate path is within allowed sandbox
-        flow_path = validate_path_under_cwd(flow_path)
+        flow_path = workspace.checked_flow_path(flow_path, current_user.id if current_user else None)
         flow_path_ref = Path(flow_path)
         if not flow_path_ref.parent.exists():
             raise HTTPException(422, "The directory does not exist")
@@ -1963,8 +2049,15 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
     is authoritative. Incomplete settings (no namespace resolved yet) pass — the
     user may still be configuring the node. An unchanged target also passes: the
     settings drawer re-POSTs on close, and merely viewing a shared flow's writer
-    node must not surface a permission error."""
+    node must not surface a permission error. A schema kept elsewhere takes Overwrite and Append only, refused
+    with the run's own sentence whether or not the target changed, after the access check when it changed. A
+    ``namespace_full_name`` that resolves nowhere with no ``namespace_id`` is refused with the run's sentence too.
+    A writer on the hub names a schema of the hub, never refused as kept elsewhere or as missing here."""
+    from flowfile_core.flowfile.flow_graph.catalog_resolution import unresolved_schema_refusal
+
     settings = node.catalog_write_settings
+    with get_db_context() as db:
+        outside = external_catalogs.outside_write_target(db, settings)
     existing_node = flow.get_node(node.node_id)
     existing_settings = getattr(existing_node, "setting_input", None)
     current = getattr(existing_settings, "catalog_write_settings", None)
@@ -1976,16 +2069,25 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
         prior_user_id = getattr(existing_settings, "user_id", None)
         if prior_user_id is not None:
             node.user_id = prior_user_id
+        _refuse_outside_choice(outside, settings)
         return
     with get_db_context() as db:
         resolver = AccessResolver(db, current_user)
-        if not resolver.restricted:
-            return
         svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        if outside is not None:
+            if resolver.restricted and outside.namespace_id not in resolver.writable_namespace_ids():
+                raise HTTPException(status_code=403, detail=_outside_write_access_refusal(db, current_user, outside))
+            _refuse_outside_choice(outside, settings)
+            return
+        refusal = unresolved_schema_refusal(svc, settings)
+        if refusal is not None:
+            raise HTTPException(status_code=422, detail=refusal)
         ns_id = svc.resolve_namespace_id_by_full_name(settings.namespace_full_name)
         if ns_id is None:
             ns_id = settings.namespace_id
-        if ns_id is None:
+        if not table_sources.is_remote(settings.source):
+            _refuse_kept_elsewhere(db, ns_id)
+        if not resolver.restricted or ns_id is None:
             return
         existing = svc.repo.get_table_by_name(settings.table_name, ns_id) if settings.table_name else None
         if existing is not None:
@@ -2001,15 +2103,40 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
             )
 
 
+def _outside_write_access_refusal(db, current_user, outside) -> str:
+    """The run's sentence for someone who may read the schema kept elsewhere; the generic one for anyone else, so
+    nobody learns of a schema they cannot read."""
+    if sharing.can_use(db, current_user, "catalog_namespace", outside.namespace_id):
+        return external_catalogs.read_only_refusal(f"{outside.catalog}.{outside.schema}")
+    return "You do not have write access to the selected catalog namespace"
+
+
+def _refuse_outside_choice(outside, settings: input_schema.CatalogWriteSettings) -> None:
+    """422 with the run's sentence for a choice a schema kept elsewhere refuses; nothing for any other target."""
+    try:
+        external_catalogs.refuse_outside_write(outside, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
 def _validate_catalog_namespace_writable_for_user(namespace_id: int | None, current_user, detail: str) -> None:
     """Raise 403 when a restricted user may not create in ``namespace_id``. Shared
     save-time gate for catalog-publishing nodes; run-time checks are authoritative."""
     if namespace_id is None:
         return
     with get_db_context() as db:
+        _refuse_kept_elsewhere(db, namespace_id)
         resolver = AccessResolver(db, current_user)
         if resolver.restricted and namespace_id not in resolver.writable_namespace_ids():
             raise HTTPException(status_code=403, detail=detail)
+
+
+def _refuse_kept_elsewhere(db, namespace_id: int | None) -> None:
+    """422 for a target namespace another catalog keeps: nothing is saved into it."""
+    try:
+        external_catalogs.refuse_kept_elsewhere(db, namespace_id)
+    except KeptElsewhereError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def _validate_train_model_target(node: input_schema.NodeTrainModel, current_user, flow) -> None:
@@ -2313,9 +2440,11 @@ def _rest_api_sample_rows(
 
 
 @router.get("/files/available_flow_files", tags=["editor"], response_model=list[FileInfo])
-def get_list_of_saved_flows(path: str):
+def get_list_of_saved_flows(path: str, current_user=Depends(get_current_active_user)):
     """Scans a directory for saved flow files (`.flowfile`)."""
     try:
+        if is_server_mode():
+            return workspace.explorer_for(path, current_user.id, None).list_contents(file_types=["flowfile"])
         # Validate path is within sandbox before proceeding
         explorer = SecureFileExplorer(start_path=storage.user_data_directory, sandbox_root=storage.user_data_directory)
         validated_path = explorer.get_absolute_path(path)
@@ -2695,7 +2824,7 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     session gets its display name and ``source_registration_id``, but no new catalog
     row is created. Use the Save dialog (or ``POST /catalog/flows``) to file a flow.
     """
-    validated_path = validate_path_under_cwd(flow_path)
+    validated_path = workspace.checked_flow_path(flow_path, current_user.id if current_user else None)
     _require_registered_file_in_storage(validated_path)
     if not os.path.exists(validated_path):
         raise HTTPException(404, "File not found")
@@ -2705,6 +2834,15 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     if flow and flow.flow_settings:
         resolve_source_registration_id(flow)
     return flow_id
+
+
+def _current_flow_path(current_path: str | None) -> str | None:
+    """The open flow's own file, resolved for comparing with a save's target: on a server it is a path the server
+    set (``register_flow``, a create, an open or a save checked it), elsewhere it goes through
+    ``validate_path_under_cwd`` as always."""
+    if not current_path:
+        return None
+    return os.path.realpath(current_path) if is_server_mode() else validate_path_under_cwd(current_path)
 
 
 def _save_flow_impl(
@@ -2737,7 +2875,7 @@ def _save_flow_impl(
     if namespace_id is not None and not register_in_catalog:
         raise HTTPException(422, "namespace_id requires register_in_catalog=True")
     if flow_path is not None:
-        flow_path = validate_path_under_cwd(flow_path)
+        flow_path = workspace.checked_flow_path(flow_path, current_user.id if current_user else None)
     flow = get_flow_or_404(flow_id, current_user)
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
 
@@ -2747,8 +2885,8 @@ def _save_flow_impl(
         raise HTTPException(422, "No save path specified and flow has no existing path")
 
     # Re-validate: current_path can be set via POST /flow_settings without validation.
-    flow_path = validate_path_under_cwd(flow_path)
-    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+    flow_path = workspace.checked_flow_path(flow_path, current_user.id if current_user else None)
+    normalized_current = _current_flow_path(current_path)
 
     is_new_path = bool(normalized_current) and flow_path != normalized_current
 
@@ -2902,7 +3040,7 @@ def save_flow_to_catalog(
     _require_registrable_flow_path(flow_path)
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
-    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+    normalized_current = _current_flow_path(current_path)
     is_new_path = bool(normalized_current) and flow_path != normalized_current
 
     existing_reg = find_registration_by_path(flow_path)
@@ -2999,7 +3137,7 @@ def overwrite_flow_in_catalog(
     managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
-    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+    normalized_current = _current_flow_path(current_path)
 
     if normalized_current == target_path:
         resolve_source_registration_id(flow)
@@ -3341,9 +3479,9 @@ async def get_formula_chain_instant_function_result(
 
 
 @router.get("/api/get_xlsx_sheet_names", tags=["excel_reader"], response_model=list[str])
-async def get_excel_sheet_names(path: str) -> list[str] | None:
+async def get_excel_sheet_names(path: str, current_user=Depends(get_current_active_user)) -> list[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    validated_path = validate_path_under_cwd(path)
+    validated_path = workspace.checked_data_path(path, current_user.id if current_user else None)
     sheet_names = excel_file_manager.get_sheet_names(validated_path)
     if sheet_names:
         return sheet_names

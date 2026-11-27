@@ -19,7 +19,7 @@ def _manager(tmp_path, *, volume=None, network=None):
     mgr._catalog_tables_dir = str(tmp_path / "catalog")
     mgr._kernel_volume = volume
     mgr._kernel_volume_type = "volume"
-    mgr._kernel_mount_target = "/app/internal_storage"
+    mgr._kernel_mount_target = str(tmp_path)
     mgr._catalog_volume = None
     mgr._docker_network = network
     mgr._core_instance_id = mgr._runtime_id = "x"

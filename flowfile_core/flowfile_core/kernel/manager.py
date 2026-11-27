@@ -1,9 +1,12 @@
 import asyncio
 import functools
+import hashlib
 import json
 import logging
 import os
+import posixpath
 import re
+import shutil
 import socket
 import tempfile
 import threading
@@ -25,6 +28,7 @@ from packaging.version import Version
 from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.flowfile.execution import registry as compute_registry
 
 # Re-exported for existing callers; the tags live in docker-free images.py so matching.py can read them.
@@ -55,6 +59,7 @@ from flowfile_core.kernel.models import (
     ResolvedPackage,
 )
 from flowfile_core.kernel.urls import core_base_url
+from shared.path_utils import contained_path
 from shared.run_completion import _pid_is_alive  # cross-platform; os.kill(pid, 0) kills on Windows
 from shared.storage_config import storage
 
@@ -90,6 +95,11 @@ def _signed(kernel_token: str | None) -> dict[str, str]:
 class _NoKernelToken(RuntimeError):
     """Core could not mint or record a kernel's token. Such a kernel does not start: it would take every call on
     its port, and core would refuse each of its own."""
+
+
+class KernelMountRefused(ValueError):
+    """Docker here cannot mount only a kernel's shared folder. Such a kernel does not start: it would see all of
+    the volume the folder is in."""
 
 
 def _resolve_image(
@@ -256,6 +266,10 @@ _IMAGE_LABEL_BASE_IMAGE = "flowfile_base_image"
 _CONTAINER_LABEL_CORE_RUNTIME = "flowfile_core_runtime"
 # That process's pid, so a later core can tell whether the owner is still alive.
 _CONTAINER_LABEL_CORE_PID = "flowfile_core_pid"
+# A digest of the mounts of a container started by a core in a container, so one with other mounts is replaced.
+_CONTAINER_LABEL_MOUNTS = "flowfile_mounts"
+# The Engine API that mounts a folder inside a named volume (Docker 26.0).
+_SUBPATH_MIN_API = "1.45"
 
 # Grace window before anything counts as an orphan.
 _GC_MIN_AGE_SECONDS = 600
@@ -413,6 +427,24 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
     return None
 
 
+def _folder_mount(source: str, mount_type: str, mounted_at: str, folder: str) -> docker.types.Mount:
+    """*folder* of the mount core has at *mounted_at*, at the path core sees it, and nothing else of that mount.
+
+    A bind's matching subfolder or a volume's subpath; the whole mount when *folder* is where it is mounted.
+    """
+    inner = posixpath.relpath(folder, mounted_at)
+    if inner == ".":
+        return docker.types.Mount(target=folder, source=source, type=mount_type, read_only=False)
+    if mount_type == "bind":
+        return docker.types.Mount(target=folder, source=posixpath.join(source, inner), type="bind", read_only=False)
+    return docker.types.Mount(target=folder, source=source, type=mount_type, read_only=False, subpath=inner)
+
+
+def _mounts_label(mounts: list[docker.types.Mount]) -> str:
+    """A digest of a container's mounts, kept as a label so a container with other mounts is told apart."""
+    return hashlib.sha256(json.dumps(mounts, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def _notebook_env(kernel: KernelInfo) -> dict[str, str]:
     """A notebook kernel's flowfile never migrates, seeds or GCs anything and holds no catalog database: its engine
     refuses every connection (``flowfile_frame.notebook_kernel``). Its storage folder is the container's own: the
@@ -477,6 +509,9 @@ def bake_failure_summary(packages: list[str], log_lines: list[str], reason: str 
 
 
 class KernelManager:
+    # Why no kernel starts here, when Docker cannot mount only the shared folder; None when it can.
+    _mount_refusal: str | None = None
+
     def __init__(self, shared_volume_path: str | None = None):
         _probe_docker()
         self._docker = docker.from_env()
@@ -519,7 +554,7 @@ class KernelManager:
         # When core runs in a container, kernels join its network for service discovery.
         self._docker_network: str | None = os.environ.get("FLOWFILE_DOCKER_NETWORK") or self._detect_docker_network()
 
-        # In Docker mode kernels mount the volume covering _shared_volume at the same path, so paths match.
+        # In Docker mode kernels mount _shared_volume, out of the volume covering it, at the same path, so paths match.
         self._kernel_volume: str | None = None
         self._kernel_volume_type: str | None = None
         self._kernel_mount_target: str | None = None  # mount point inside containers
@@ -541,6 +576,9 @@ class KernelManager:
                     self._shared_volume,
                     self._docker_network,
                 )
+                self._mount_refusal = self._shared_mount_refusal()
+                if self._mount_refusal:
+                    logger.error("No kernel can start: %s", self._mount_refusal)
             else:
                 logger.warning(
                     "Could not discover volume for shared_path=%s; "
@@ -579,6 +617,12 @@ class KernelManager:
     @property
     def shared_volume_path(self) -> str:
         return self._shared_volume
+
+    def exchange_dirs(self, kernel_id: str, flow_id: int, node_id: int) -> tuple[str, str]:
+        """The folders a node exchanges data with *kernel_id* through, as core's paths: where its inputs are written
+        and where the kernel writes its outputs. Every kernel uses the shared folder."""
+        base = os.path.join(self._shared_volume, str(flow_id), str(node_id))
+        return os.path.join(base, "inputs"), os.path.join(base, "outputs")
 
     # Docker-in-Docker helpers
 
@@ -621,7 +665,8 @@ class KernelManager:
             best: dict | None = None
             for mount in mounts:
                 dest = mount.get("Destination", "")
-                if path.startswith(dest) and (best is None or len(dest) > len(best.get("Destination", ""))):
+                covers = path == dest or path.startswith(dest.rstrip("/") + "/")
+                if covers and (best is None or len(dest) > len(best.get("Destination", ""))):
                     best = mount
 
             if best:
@@ -634,6 +679,33 @@ class KernelManager:
         except Exception as exc:
             logger.warning("Could not inspect container mounts: %s", exc)
         return None, None, None
+
+    def _shared_mount_refusal(self) -> str | None:
+        """Why Docker here cannot give a kernel the shared folder without the rest of its volume, or None.
+
+        A folder inside a named volume is mounted by subpath, which Docker has from 26.0 on. A bind's subfolder,
+        or a volume that is the shared folder, mounts on any Docker.
+        """
+        mounted_at = self._kernel_mount_target or "/app/internal_storage"
+        if self._kernel_volume_type == "bind" or posixpath.relpath(self._shared_volume, mounted_at) == ".":
+            return None
+        if not docker.utils.version_lt(self._docker.api.api_version, _SUBPATH_MIN_API):
+            return None
+        return (
+            "Docker on this server is older than 26.0, so a kernel cannot mount only its shared folder; upgrade "
+            f"Docker, or mount a separate volume at {self._shared_volume} in core and the worker."
+        )
+
+    def _mounts_changed(self, kernel_id: str, kernel: KernelInfo, container) -> bool:
+        """Whether *container*, started by a core in a container, mounts something else than the kernel gets now,
+        as one from before a kernel mounted only its shared folder does."""
+        if not self._kernel_volume:
+            return False
+        try:
+            wanted = self._build_run_kwargs(kernel_id, kernel, {})["labels"][_CONTAINER_LABEL_MOUNTS]
+        except KernelMountRefused:
+            return True
+        return self._container_label(container, _CONTAINER_LABEL_MOUNTS) != wanted
 
     def _kernel_url(self, kernel: KernelInfo) -> str:
         """Return the base URL for communicating with a kernel container.
@@ -721,6 +793,32 @@ class KernelManager:
 
         request.output_dir = self.to_kernel_path(output_dir)
 
+    def _user_data_mounts(self, kernel_id: str) -> list["docker.types.Mount"]:
+        """The user data folders a kernel mounts, at the paths core sees them.
+
+        Of a bind: the catalog's tables folder, the uploads and outputs folders and the workspace of the kernel's
+        owner, each the matching folder of the bind's source. Of a named volume: the volume where core mounts it.
+        """
+        target = self._catalog_mount_target or "/app/user_data"
+        mount_type = self._catalog_volume_type or "volume"
+        if mount_type != "bind":
+            return [docker.types.Mount(target=target, source=self._catalog_volume, type=mount_type, read_only=False)]
+        folders = [Path(self._catalog_tables_dir), storage.uploads_directory, storage.outputs_directory]
+        owner = getattr(self, "_kernel_owners", {}).get(kernel_id)
+        if owner is not None:
+            folders.append(workspace.workspace_of(owner))
+        mounts = []
+        for folder in folders:
+            inner = os.path.relpath(folder, target)
+            if inner.startswith(".."):
+                continue
+            folder.mkdir(parents=True, exist_ok=True)
+            source = (
+                self._catalog_volume if inner == "." else posixpath.join(self._catalog_volume, Path(inner).as_posix())
+            )
+            mounts.append(docker.types.Mount(target=str(folder), source=source, type="bind", read_only=False))
+        return mounts
+
     def _build_run_kwargs(self, kernel_id: str, kernel: KernelInfo, env: dict) -> dict:
         """Build Docker ``containers.run()`` keyword arguments.
 
@@ -728,6 +826,9 @@ class KernelManager:
         Always mounts the catalog_tables directory so kernel cells can read
         and write Delta-format catalog tables directly; no other host folder
         is ever mounted (a notebook kernel reads files through core).
+
+        Raises:
+            KernelMountRefused: Core runs in a container and Docker cannot mount only the shared folder.
         """
         run_kwargs: dict = {
             "detach": True,
@@ -745,28 +846,23 @@ class KernelManager:
         }
 
         if self._kernel_volume:
-            # The same volume at the same path, so file paths match in core, worker and kernel.
-            mount_type = self._kernel_volume_type or "volume"
-            mount_target = self._kernel_mount_target or "/app/internal_storage"
+            if self._mount_refusal:
+                raise KernelMountRefused(self._mount_refusal)
+            os.makedirs(self._shared_volume, exist_ok=True)
+            # Only the shared folder of its volume, at the same path, so file paths match in core, worker and kernel.
             mounts = [
-                docker.types.Mount(
-                    target=mount_target,
-                    source=self._kernel_volume,
-                    type=mount_type,
-                    read_only=False,
+                _folder_mount(
+                    self._kernel_volume,
+                    self._kernel_volume_type or "volume",
+                    self._kernel_mount_target or "/app/internal_storage",
+                    self._shared_volume,
                 )
             ]
             # Catalog tables sit under the user data directory, usually a volume of its own.
             if self._catalog_volume:
-                mounts.append(
-                    docker.types.Mount(
-                        target=self._catalog_mount_target or "/app/user_data",
-                        source=self._catalog_volume,
-                        type=self._catalog_volume_type or "volume",
-                        read_only=False,
-                    )
-                )
+                mounts.extend(self._user_data_mounts(kernel_id))
             run_kwargs["mounts"] = mounts
+            run_kwargs["labels"][_CONTAINER_LABEL_MOUNTS] = _mounts_label(mounts)
             if self._docker_network:
                 run_kwargs["network"] = self._docker_network
         else:
@@ -1113,6 +1209,17 @@ class KernelManager:
             if not name.startswith("flowfile-kernel-"):
                 continue
             kernel_id = name[len("flowfile-kernel-") :]
+            known = self._kernels.get(kernel_id)
+            running = known is not None and container.status == "running"
+            if running and self._mounts_changed(kernel_id, known, container):
+                # Its run ends below with the runs that have no running container; the next start mounts anew.
+                logger.info(
+                    "Removing the container of kernel '%s' (%s): it mounts something else than a kernel gets now",
+                    kernel_id,
+                    container.short_id,
+                )
+                self._remove_container_by_id(container.id)
+                continue
             if container.status == "running":
                 runs.pop(kernel_id, None)
 
@@ -1863,7 +1970,14 @@ class KernelManager:
             if flow_logger:
                 flow_logger.info(f"Kernel {kernel_id} is idle (container {container.short_id}, image {image})")
             logger.info("Kernel '%s' is idle (container %s, image %s)", kernel_id, container.short_id, image)
-        except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError, _NoKernelToken) as exc:
+        except (
+            docker.errors.DockerException,
+            httpx.HTTPError,
+            TimeoutError,
+            OSError,
+            _NoKernelToken,
+            KernelMountRefused,
+        ) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
             flow_logger.error(f"Failed to start kernel {kernel_id}: {exc}") if flow_logger else None
@@ -1909,8 +2023,8 @@ class KernelManager:
                 last_exc = exc
                 continue
 
-            if holder.attrs.get("Image") != desired_image_id:
-                # Stale container (e.g. derived image rebuilt under the same tag).
+            if holder.attrs.get("Image") != desired_image_id or self._mounts_changed(kernel_id, kernel, holder):
+                # Stale container (e.g. derived image rebuilt under the same tag, or other mounts).
                 self._remove_container_by_id(holder.id)
                 continue
 
@@ -2026,9 +2140,25 @@ class KernelManager:
             del self._kernels[kernel_id]
             self._kernel_owners.pop(kernel_id, None)
         self._remove_kernel_from_db(kernel_id)
+        self._remove_persisted_artifacts(kernel_id)
         if had_packages:
             self._remove_derived_image(kernel_id)
         logger.info("Deleted kernel '%s'", kernel_id)
+
+    def _remove_persisted_artifacts(self, kernel_id: str) -> None:
+        """Remove the folder a deleted kernel persisted its artifacts in, which only that kernel read.
+
+        Only a folder of its own directly inside the shared folder's ``artifacts``: an id that names anything else
+        removes nothing. Best effort, since a kernel writes as root and core may run as another user.
+        """
+        root = os.path.realpath(os.path.join(self._shared_volume, "artifacts"))
+        folder = contained_path(root, os.path.join(root, kernel_id))
+        if folder is None or os.path.dirname(folder) != root or not os.path.isdir(folder):
+            return
+        try:
+            shutil.rmtree(folder)
+        except OSError as exc:
+            logger.warning("Could not remove the persisted artifacts of kernel '%s' at %s: %s", kernel_id, folder, exc)
 
     def shutdown_all(self) -> None:
         """Stop and remove all running kernel containers. Called on core shutdown."""

@@ -41,6 +41,7 @@ from flowfile_core.catalog import (
     FlowNotFoundError,
     FollowNotFoundError,
     InvalidNamespaceStorageError,
+    KeptElsewhereError,
     NamespaceExistsError,
     NamespaceNotEmptyError,
     NamespaceNotFoundError,
@@ -54,6 +55,9 @@ from flowfile_core.catalog import (
     RunNotFoundError,
     ScheduleNotFoundError,
     SeededNamespaceError,
+    SemanticConflictError,
+    SemanticNotFoundError,
+    SemanticValueError,
     SQLAlchemyCatalogRepository,
     StaleWriteError,
     TableExistsError,
@@ -68,12 +72,13 @@ from flowfile_core.catalog import (
     table_sources,
 )
 from flowfile_core.catalog.access import AccessResolver
+from flowfile_core.catalog.services import external_catalogs
 from flowfile_core.catalog.services.tables import catalog_table_location
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
-from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.fileExplorer import validate_path_under_cwd, workspace
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
@@ -155,6 +160,7 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
+from shared.path_utils import contained_path
 from shared.storage_config import require_flow_in_storage, storage
 
 _READ_HERE = (
@@ -269,6 +275,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     SeededNamespaceError: (422, None),
     NamespaceStorageLockedError: (409, None),
     InvalidNamespaceStorageError: (422, None),
+    KeptElsewhereError: (422, None),
     NotAuthorizedError: (403, None),
     FlowNotFoundError: (404, "Flow not found"),
     FlowExistsError: (409, "A flow with this name already exists in this namespace"),
@@ -297,6 +304,9 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     CdcNotSupportedError: (409, None),
     CdcCursorNotFoundError: (404, None),
     CdcCursorsAtRiskError: (409, None),
+    SemanticNotFoundError: (404, None),
+    SemanticConflictError: (409, None),
+    SemanticValueError: (422, None),
     table_sources.Refused: (403, None),
     ValueError: (422, None),
 }
@@ -904,15 +914,25 @@ def list_tables(
     kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
+    db: Session = Depends(get_db),
 ):
     """List catalog tables, optionally filtered by namespace.
 
     Accepts the kernel's internal token so ``flowfile_ctx.list_catalog_tables``
     can enumerate available tables. A negative ``namespace_id`` is a namespace
-    of a remote catalog of the kernel's owner.
+    of a remote catalog of the kernel's owner. For a kernel, a schema kept
+    elsewhere lists the tables its catalog has now (``external_catalogs.schema_tables``,
+    as the kernel's owner; a refusal is a 422 with its sentence).
     """
     if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
         return table_sources.kernel_tables(kernel_owner, namespace_id)
+    if kernel_owner is not None and namespace_id is not None:
+        try:
+            elsewhere = external_catalogs.schema_tables(db, namespace_id, kernel_owner)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if elsewhere is not None:
+            return elsewhere
     return service.list_tables(namespace_id=namespace_id, user_id=current_user.id)
 
 
@@ -928,7 +948,10 @@ def register_table(
     Accepts the kernel's internal token so ``flowfile_ctx.write_catalog_table``
     can register tables it produced.
     """
-    validated_path = validate_path_under_cwd(body.file_path)
+    if contained_path(storage.shared_directory, body.file_path) is not None:
+        validated_path = validate_path_under_cwd(body.file_path)
+    else:
+        validated_path = workspace.checked_data_path(body.file_path, current_user.id)
     return service.register_table(
         name=body.name,
         file_path=validated_path,
@@ -1006,13 +1029,15 @@ def resolve_table(
     kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
+    db: Session = Depends(get_db),
 ):
     """Resolve a catalog table by ``"namespace.table"`` or bare ``"table"`` reference.
 
     Strict mode raises ``AmbiguousTableError`` (→ 409) when a bare name matches >1 row.
     Default mode soft-picks deterministically and reports alternatives in ``warnings``.
-    For a kernel, a name this machine's catalog does not hold is looked up among the tables of its owner's remote
-    catalogs, and a negative ``namespace_id`` names a namespace there (``table_sources.kernel_table``).
+    For a kernel, a name this machine's catalog does not hold is looked up next in the catalogs kept elsewhere
+    (``external_catalogs.kernel_table``: a view, or a 422 with the refusal's sentence), then among the tables of its
+    owner's remote catalogs, where a negative ``namespace_id`` names a namespace (``table_sources.kernel_table``).
     """
     if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
         in_namespace = table_sources.kernel_table(kernel_owner, q, namespace_id)
@@ -1027,7 +1052,11 @@ def resolve_table(
             user_id=current_user.id,
         )
     except (TableNotFoundError, NamespaceNotFoundError):
-        elsewhere = table_sources.kernel_table(kernel_owner, q) if kernel_owner is not None else None
+        if kernel_owner is None:
+            raise
+        elsewhere = external_catalogs.kernel_table(db, q, namespace_id, kernel_owner) or table_sources.kernel_table(
+            kernel_owner, q
+        )
         if elsewhere is None:
             raise
         return ResolveTableResult(table=elsewhere)

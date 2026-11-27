@@ -78,7 +78,16 @@ const readSurfaceModels = (raw: unknown): Record<string, SurfaceModel> | null =>
       model: typeof pick.model === "string" ? pick.model : null,
     };
   }
-  return out;
+  return splitLegacySemanticPick(out);
+};
+
+/** The one ``semantic`` pick older saves held now serves both semantic tasks, until either is changed. */
+export const splitLegacySemanticPick = (
+  picks: Record<string, SurfaceModel>,
+): Record<string, SurfaceModel> => {
+  const { semantic: legacy, ...rest } = picks;
+  if (!legacy) return picks;
+  return { semantic_ask: legacy, semantic_suggest: legacy, ...rest };
 };
 
 export interface PersistedAiState {

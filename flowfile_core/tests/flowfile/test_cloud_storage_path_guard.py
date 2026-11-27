@@ -105,3 +105,24 @@ def test_change_read_target_guards_the_path_before_resolving_a_connection():
 def test_wildcard_pattern_rejects_an_empty_path():
     with pytest.raises(ValueError, match=re.escape(READER_NO_PATH)):
         ensure_path_has_wildcard_pattern("", "parquet")
+
+
+def test_an_iceberg_table_name_passes_the_guard_and_a_multi_user_server_refuses_it_before_any_lookup(monkeypatch):
+    """A dotted table name is no storage path; in docker mode the node fails with one sentence, no secret looked up."""
+    from flowfile_core.flowfile.flow_graph.cloud import ICEBERG_ON_A_SERVER, _iceberg_table_ref
+
+    settings = input_schema.CloudStorageReadSettings(
+        resource_path="demo.orders",
+        file_format="iceberg",
+        iceberg_catalog={"uri": "http://127.0.0.1:9/catalog", "token_secret": "no-such-secret"},
+    )
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    with pytest.raises(ValueError, match=re.escape(ICEBERG_ON_A_SERVER)):
+        _iceberg_table_ref(settings, user_id=1)
+
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    with pytest.raises(ValueError, match="No stored secret is named 'no-such-secret'"):
+        _iceberg_table_ref(settings, user_id=1)
+    settings.iceberg_catalog.token_secret = None
+    ref = _iceberg_table_ref(settings, user_id=1)
+    assert (ref.catalog_uri, ref.table, ref.token) == ("http://127.0.0.1:9/catalog", "demo.orders", None)

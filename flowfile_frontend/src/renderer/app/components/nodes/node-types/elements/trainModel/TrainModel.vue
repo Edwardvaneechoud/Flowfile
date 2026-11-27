@@ -167,6 +167,7 @@ function flattenNamespaceTree(
 ): NamespaceOption[] {
   const out: NamespaceOption[] = [];
   for (const node of tree) {
+    if (node.kept_elsewhere) continue; // another catalog keeps it; nothing is saved into it
     const label = parentLabel ? `${parentLabel} > ${node.name}` : node.name;
     // The backend stamps direct grants only; an unstamped schema inherits its
     // catalog's grant level.
@@ -176,7 +177,11 @@ function flattenNamespaceTree(
       // writable namespaces are offered as a publish target.
       if (
         !(parentLabel === "General" && SYSTEM_NAMESPACE_NAMES.has(node.name)) &&
-        isWritableNamespace({ access: effectiveAccess })
+        isWritableNamespace({
+          access: effectiveAccess,
+          source: node.source,
+          can_write: node.can_write,
+        })
       ) {
         out.push({
           id: node.id,

@@ -51,6 +51,7 @@ from flowfile_core.notebook.runner import install_notebook_runner
 from flowfile_core.routes.api_consumers import router as api_consumers_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
+from flowfile_core.routes.catalog_semantic import router as catalog_semantic_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
 from flowfile_core.routes.cloud_delta import router as cloud_delta_router
 from flowfile_core.routes.community_github import router as community_github_router
@@ -58,6 +59,7 @@ from flowfile_core.routes.community_nodes import router as community_nodes_route
 from flowfile_core.routes.compute_backends import router as compute_backends_router
 from flowfile_core.routes.converters import router as converters_router
 from flowfile_core.routes.custom_node_mounts import router as custom_node_mounts_router
+from flowfile_core.routes.external_catalogs import router as external_catalogs_router
 from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.flow_api import data_router as flow_api_data_router
 from flowfile_core.routes.flow_api import management_router as flow_api_management_router
@@ -249,6 +251,8 @@ app.add_middleware(change_feed.ClientOriginMiddleware)
 app.include_router(public_router)
 app.include_router(router)
 app.include_router(catalog_router)
+app.include_router(external_catalogs_router)
+app.include_router(catalog_semantic_router)
 app.include_router(search_router)
 # Flow-as-API: public key-authenticated data endpoint + JWT management endpoints.
 app.include_router(flow_api_data_router)

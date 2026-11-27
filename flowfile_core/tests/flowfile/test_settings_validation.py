@@ -972,6 +972,37 @@ def test_cloud_reader_without_a_path_warns():
     assert validate_flow_settings(cloud_reader_graph("s3://flowfile-test/data.parquet")).nodes == []
 
 
+def iceberg_reader_graph() -> FlowGraph:
+    from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
+
+    token = schema_prefetch_blocked.set(True)
+    try:
+        graph = create_graph()
+        add_promise(graph, "cloud_storage_reader", 1)
+        graph.add_cloud_storage_reader(input_schema.NodeCloudStorageReader.model_validate({
+            "flow_id": graph.flow_id, "node_id": 1, "user_id": 1,
+            "cloud_storage_settings": {
+                "resource_path": "demo.orders", "file_format": "iceberg",
+                "iceberg_catalog": {"uri": "http://127.0.0.1:9/catalog"},
+            },
+        }))
+        return graph
+    finally:
+        schema_prefetch_blocked.reset(token)
+
+
+def test_an_iceberg_table_name_is_no_bad_path_and_a_multi_user_server_is_told_why_it_is_refused(monkeypatch):
+    from flowfile_core.flowfile.flow_graph.cloud import ICEBERG_ON_A_SERVER
+
+    graph = iceberg_reader_graph()
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    assert validate_flow_settings(graph).nodes == []
+
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    (issue,) = issues_by_node(validate_flow_settings(graph))[1]
+    assert (issue.kind, issue.message) == ("invalid_path", ICEBERG_ON_A_SERVER)
+
+
 def test_cloud_path_issue_sits_beside_column_issues():
     graph = cloud_writer_graph(partition_by=["gone"])
     kinds = sorted(issue.kind for issue in issues_by_node(validate_flow_settings(graph))[2])

@@ -12,7 +12,7 @@ from flowfile_core.configs import settings
 from flowfile_core.kernel import routes as kernel_routes
 from flowfile_core.kernel.models import KernelState
 
-UNAVAILABLE = {"namespace_generation": "", "revision": 0, "state": "unavailable", "dataframes": []}
+UNANSWERED = {"namespace_generation": "", "revision": 0, "state": "unavailable", "dataframes": [], "answered": False}
 
 
 @pytest.fixture(scope="module")
@@ -77,7 +77,7 @@ def test_flag_off_degrades_to_unavailable(client: TestClient, owner_id: int, mon
     _install_manager(monkeypatch, manager)
     resp = client.post("/kernels/k1/lsp/dataframe_schemas", json={"flow_id": 1})
     assert resp.status_code == 200
-    assert resp.json() == UNAVAILABLE
+    assert resp.json() == UNANSWERED
     assert manager.calls == []
 
 
@@ -85,7 +85,7 @@ def test_unknown_kernel_degrades_to_unavailable(client: TestClient, owner_id: in
     _install_manager(monkeypatch, _StubManager(kernel=None, owner_id=owner_id))
     resp = client.post("/kernels/no-such-kernel/lsp/dataframe_schemas", json={"flow_id": 1})
     assert resp.status_code == 200
-    assert resp.json() == UNAVAILABLE
+    assert resp.json() == UNANSWERED
 
 
 def test_non_owner_degrades_to_unavailable(client: TestClient, owner_id: int, monkeypatch):
@@ -93,7 +93,7 @@ def test_non_owner_degrades_to_unavailable(client: TestClient, owner_id: int, mo
     _install_manager(monkeypatch, manager)
     resp = client.post("/kernels/k1/lsp/dataframe_schemas", json={"flow_id": 1})
     assert resp.status_code == 200
-    assert resp.json() == UNAVAILABLE
+    assert resp.json() == UNANSWERED
     assert manager.calls == []
 
 
@@ -117,10 +117,21 @@ def test_kernel_payload_passes_through_verbatim(client: TestClient, owner_id: in
     _install_manager(monkeypatch, manager)
     resp = client.post("/kernels/k1/lsp/dataframe_schemas", json={"flow_id": 42, "node_id": 7})
     assert resp.status_code == 200
-    assert resp.json() == payload
+    assert resp.json() == {**payload, "answered": True}
     assert manager.calls == [
         ("k1", "dataframe_schemas", {"flow_id": 42, "node_id": 7, "resolve_lazy_frames": False})
     ]
+
+
+def test_a_kernel_without_the_namespace_is_told_from_one_that_could_not_answer(
+    client: TestClient, owner_id: int, monkeypatch
+):
+    none_held = {key: value for key, value in UNANSWERED.items() if key != "answered"}
+    for payload, answered in ((none_held, True), ({}, False)):
+        manager = _StubManager(kernel=_StubKernel(KernelState.IDLE), owner_id=owner_id, payload=payload)
+        _install_manager(monkeypatch, manager)
+        resp = client.post("/kernels/k1/lsp/dataframe_schemas", json={"flow_id": -1})
+        assert resp.json() == {**UNANSWERED, "answered": answered}
 
 
 def test_resolve_lazy_frames_reaches_the_kernel_verbatim(client: TestClient, owner_id: int, monkeypatch):

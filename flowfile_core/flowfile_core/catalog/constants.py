@@ -17,6 +17,8 @@ MAX_THUMBNAIL_BYTES = 500_000
 DEFAULT_SQL_MAX_ROWS = 10_000
 MIN_SCHEDULE_INTERVAL_SECONDS = 60
 QUERY_VIRTUAL_TABLE_RECURSION_LIMIT = 5
+# The storage_format of the row a table of a catalog kept elsewhere gets for its lineage; no listing shows one.
+KEPT_ELSEWHERE_FORMAT = "iceberg"
 
 # save_sql_query_as_flow node-layout positions
 SAVED_FLOW_NODE_X = 100

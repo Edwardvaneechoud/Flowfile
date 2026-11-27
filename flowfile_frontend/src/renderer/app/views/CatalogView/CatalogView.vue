@@ -104,6 +104,13 @@
                 <el-dropdown-item @click="showCreateNamespace = true">
                   <i class="fa-solid fa-plus fa-fw"></i> New catalog
                 </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="mayAddExternal"
+                  data-testid="catalog-new-external"
+                  @click="showExternalCatalog = true"
+                >
+                  <i class="fa-solid fa-link fa-fw"></i> Add a catalog from elsewhere
+                </el-dropdown-item>
                 <el-dropdown-item @click="openRegisterTableGlobal">
                   <i class="fa-solid fa-table fa-fw"></i> Register table
                 </el-dropdown-item>
@@ -173,12 +180,14 @@
                 :selected-artifact-id="catalogStore.selectedArtifactId"
                 :selected-table-id="catalogStore.selectedTableId"
                 :selected-namespace-id="catalogStore.selectedNamespaceId"
+                :selected-semantic-namespace-id="catalogStore.selectedSemanticNamespaceId"
                 :search-query="searchQuery"
                 :show-unavailable="showUnavailable"
                 @select-flow="selectFlow($event)"
                 @select-artifact="selectArtifact($event)"
                 @select-table="selectTable($event)"
                 @select-namespace="selectNamespace($event)"
+                @select-semantic-model="selectSemanticModel($event)"
                 @table-context-menu="onTableContextMenu($event)"
                 @artifact-context-menu="onArtifactContextMenu($event)"
                 @flow-context-menu="onFlowContextMenu($event)"
@@ -195,6 +204,8 @@
                 @namespace-share="openNamespaceShare($event)"
                 @cleanup-namespace="handleCleanupNamespace($event)"
                 @delete-namespace="handleDeleteSchema($event)"
+                @sync-external="handleSyncExternal($event)"
+                @select-external-table="selectExternalTable($event)"
               />
             </template>
           </div>
@@ -272,11 +283,27 @@
           @set-versions-page="catalogStore.setArtifactVersionsPage($event)"
           @versions-changed="refreshArtifactVersions()"
         />
+        <!-- A table of a catalog kept elsewhere, as that catalog describes it -->
+        <ExternalTableDetailPanel
+          v-else-if="externalSelection"
+          :catalog="catalogStore.findNamespaceInTree(externalSelection.catalogId)"
+          :catalog-id="externalSelection.catalogId"
+          :schema-id="externalSelection.schemaId"
+          :name="externalSelection.name"
+          @close="handleCloseDetail"
+          @navigate-to-flow="navigateToFlow($event)"
+        />
+        <SemanticModelPanel
+          v-else-if="catalogStore.selectedSemanticNamespaceId !== null"
+          :namespace-id="catalogStore.selectedSemanticNamespaceId"
+          @close="handleCloseDetail"
+        />
         <!-- Namespace (catalog) settings view -->
         <NamespaceDetailPanel
           v-else-if="catalogStore.selectedNamespace"
           :namespace="catalogStore.selectedNamespace"
           @close="handleCloseDetail"
+          @open-semantic-model="selectSemanticModel($event)"
         />
         <!-- Table detail view -->
         <TableDetailPanel
@@ -302,6 +329,7 @@
           @edits-saved="catalogStore.handleTableEdited($event)"
           @restore-version="handleRestoreVersion($event)"
           @create-viz="openCreateViz($event)"
+          @open-semantic-table="selectSemanticModel($event.namespaceId, $event.tableId)"
         />
         <!-- Flow detail view; a hub flow's is the same page with its versions and their Open on it -->
         <FlowDetailPanel
@@ -322,6 +350,7 @@
             openFlowInDesigner(catalogStore.selectedFlow, { codePane: 'notebook' })
           "
           @select-table="selectTable($event)"
+          @select-external-table="selectExternalTable($event)"
           @delete-flow="handleDeleteFlow($event)"
           @rename-flow="handleRenameFlow"
           @add-schedule="handleAddFlowSchedule"
@@ -445,6 +474,12 @@
     </div>
 
     <!-- Modals -->
+    <ExternalCatalogModal
+      :visible="showExternalCatalog"
+      @close="showExternalCatalog = false"
+      @saved="selectNamespace($event.id)"
+    />
+
     <CreateNamespaceModal
       :visible="showCreateNamespace"
       :parent-id="createSchemaParentId"
@@ -531,7 +566,7 @@
       resource-type="catalog_namespace"
       :resource-id="shareNamespace.id"
       :resource-name="shareNamespace.name"
-      :can-manage-grants="canManageGrants(shareNamespace)"
+      :can-manage-grants="canManageGrants(shareNamespace) && shareNamespace.can_manage !== false"
     />
 
     <!-- Right-click context menus for catalog tables and flows -->
@@ -661,6 +696,7 @@ import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore, type CatalogItemKind } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
+import { useSemanticModelStore } from "../../stores/semantic-model-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useSqlEditorStore } from "../../stores/sql-editor-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -682,6 +718,9 @@ import HubFlowDetailPanel from "./HubFlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import TableDetailPanel from "./TableDetailPanel.vue";
 import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
+import ExternalCatalogModal from "./ExternalCatalogModal.vue";
+import ExternalTableDetailPanel from "./ExternalTableDetailPanel.vue";
+import SemanticModelPanel from "./SemanticModelPanel.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
 import CreateNamespaceModal from "./CreateNamespaceModal.vue";
@@ -703,6 +742,7 @@ import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { useAuthStore } from "../../stores/auth-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import {
   byPlace,
@@ -756,6 +796,7 @@ const router = useRouter();
 const route = useRoute();
 
 const catalogStore = useCatalogStore();
+const semanticModelStore = useSemanticModelStore();
 const presentation = usePresentationStore();
 const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
@@ -766,7 +807,8 @@ const { openFlow } = useFlowOpener();
 const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
 
 // Namespace sharing (one dialog for the whole tree).
-const { canManageGrants } = useResourceSharing();
+const { canManageGrants, isMultiUser } = useResourceSharing();
+const authStore = useAuthStore();
 const { writableSchemaNamespaces } = useWritableNamespaces();
 const shareNamespace = ref<NamespaceTree | null>(null);
 const showNamespaceShareDialog = ref(false);
@@ -921,6 +963,49 @@ function setTabsCompact(value: boolean) {
   }
 }
 const showCreateNamespace = ref(false);
+const showExternalCatalog = ref(false);
+// On a server the server calls the address and holds the sign-in, so only an administrator adds one.
+const mayAddExternal = computed(() => !isMultiUser.value || authStore.isAdmin);
+
+/** The table of a catalog kept elsewhere the URL names: `externalCatalog`, `schema` and `table`. */
+const externalSelection = computed(() => {
+  const q = route.query;
+  if (!q.externalCatalog || !q.schema || !q.table) return null;
+  return {
+    catalogId: Number(q.externalCatalog),
+    schemaId: Number(q.schema),
+    name: String(q.table),
+  };
+});
+
+function selectExternalTable(target: { catalogId: number; schemaId: number; name: string }) {
+  router.push({
+    name: "catalog",
+    query: {
+      tab: "catalog",
+      externalCatalog: String(target.catalogId),
+      schema: String(target.schemaId),
+      table: target.name,
+    },
+  });
+}
+
+async function handleSyncExternal(target: { id: number; force: boolean }) {
+  const result = await catalogStore.syncExternalCatalog(target.id, target.force);
+  if (target.force && result?.error) ElMessage.error(result.error);
+  else if (target.force && result) {
+    const changed = [...result.added, ...result.back].length + result.gone.length;
+    ElMessage.success(changed ? "The catalog's schemas were brought in line" : "Nothing changed");
+  }
+  if (target.force) {
+    for (const key of Object.keys(catalogStore.externalTables)) {
+      if (key.startsWith(`${target.id}:`)) {
+        const schemaId = Number(key.split(":")[1]);
+        void catalogStore.loadExternalTables(target.id, schemaId, true);
+      }
+    }
+  }
+}
 const createSchemaParentId = ref<number | null>(null);
 const showRegisterFlow = ref(false);
 const registerFlowNamespaceId = ref<number | null>(null);
@@ -1159,6 +1244,22 @@ function selectNamespace(namespaceId: number) {
   router.push({
     name: "catalog",
     query: { tab: "catalog", namespaceId: String(namespaceId) },
+  });
+}
+
+/** A catalog (level 0) of this machine's tree: its semantic model lives on the catalog's page. */
+const isCatalogId = (namespaceId: number) =>
+  catalogStore.tree.some((c) => c.id === namespaceId && c.level === 0);
+
+function selectSemanticModel(namespaceId: number, tableId: number | null = null) {
+  if (isCatalogId(namespaceId)) {
+    selectNamespace(namespaceId);
+    return;
+  }
+  semanticModelStore.focusTableId = tableId;
+  router.push({
+    name: "catalog",
+    query: { tab: "catalog", semanticNamespaceId: String(namespaceId) },
   });
 }
 
@@ -1968,6 +2069,7 @@ const SELECTION_QUERY_KEYS = [
   "artifactId",
   "scheduleId",
   "namespaceId",
+  "semanticNamespaceId",
   "runId",
 ] as const;
 
@@ -2036,6 +2138,16 @@ function applyRouteToStore() {
     return;
   }
   const q = route.query;
+  // An old address of a catalog's model opens the catalog's page, which now holds it.
+  const oldCatalogModel = q.semanticNamespaceId ? Number(q.semanticNamespaceId) : null;
+  if (oldCatalogModel !== null && isCatalogId(oldCatalogModel)) {
+    const rest = { ...q };
+    delete rest.semanticNamespaceId;
+    rest.tab = "catalog";
+    rest.namespaceId = String(oldCatalogModel);
+    router.replace({ name: "catalog", query: rest });
+    return;
+  }
   const tab = routeTab();
   const flowId = q.flowId ? Number(q.flowId) : null;
   const runId = q.runId ? Number(q.runId) : null;
@@ -2061,6 +2173,14 @@ function applyRouteToStore() {
     if (namespaceId !== catalogStore.selectedNamespaceId) catalogStore.selectNamespace(namespaceId);
   } else if (catalogStore.selectedNamespace) {
     catalogStore.clearNamespaceSelection();
+  }
+
+  const semanticNamespaceId = q.semanticNamespaceId ? Number(q.semanticNamespaceId) : null;
+  if (semanticNamespaceId !== null) {
+    if (semanticNamespaceId !== catalogStore.selectedSemanticNamespaceId)
+      catalogStore.selectSemanticModel(semanticNamespaceId);
+  } else if (catalogStore.selectedSemanticNamespaceId !== null) {
+    catalogStore.clearSemanticSelection();
   }
 
   // Handle selections (mutually exclusive: table, artifact, schedule, or flow+run)

@@ -59,7 +59,10 @@ from flowfile_core.flowfile.flow_data_engine.join import (
     rename_df_table_for_join,
     verify_join_select_integrity,
 )
-from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
+    polars_code_parser,
+    refuse_in_process_on_server,
+)
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCreateFetcher,
@@ -81,6 +84,7 @@ from shared.cloud_storage.gcs import gcs_filesystem
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.cloud_storage.writers import write_to_cloud
 from shared.db_writer import write_dataframe_to_database
+from shared.iceberg_utils import IcebergTableRef, scan_iceberg_table, table_schema
 from shared.path_utils import (
     DirectoryScanUnsupportedError,
     assert_directory_scan_supported,
@@ -612,13 +616,7 @@ class FlowDataEngine:
                 backend=backend,
             )
         elif read_settings.file_format == "iceberg":
-            return cls._read_iceberg_from_cloud(
-                read_settings.resource_path, storage_options, credential_provider, read_settings
-            )
-
-        elif read_settings.file_format in ["delta", "iceberg"]:
-            # These would require additional libraries
-            raise NotImplementedError(f"File format {read_settings.file_format} not yet implemented")
+            raise ValueError("An Iceberg table is read through its catalog, not from a storage path.")
         else:
             raise ValueError(f"Unsupported file format: {read_settings.file_format}")
 
@@ -694,15 +692,20 @@ class FlowDataEngine:
             logger.warning(f"Could not read schema from first file in directory, using default schema: {e}")
 
     @classmethod
-    def _read_iceberg_from_cloud(
-        cls,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        read_settings: cloud_storage_schemas.CloudStorageReadSettings,
-    ) -> FlowDataEngine:
-        """Reads Iceberg table(s) from cloud storage."""
-        raise NotImplementedError("Failed to read Iceberg table from cloud storage: Not yet implemented")
+    def from_iceberg_table(cls, ref: IcebergTableRef, *, flow_id: int = -1, node_id: int | str = -1) -> FlowDataEngine:
+        """A lazy read of an Iceberg table its REST catalog keeps, named by ``ref``.
+
+        The columns come from the catalog's description of the table; nothing is collected and no backend is asked.
+        The plan holds the ref only: whichever process runs it asks the catalog for the table's keys itself.
+        """
+        schema = table_schema(ref)
+        lf = scan_iceberg_table(ref, schema=schema, flow_id=flow_id, node_id=node_id)
+        return cls(
+            lf,
+            number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
+            optimize_memory=True,
+            schema=convert_stats_to_column_info(cls._create_schema_stats_from_pl_schema(schema)),
+        )
 
     @classmethod
     def _read_parquet_from_cloud(
@@ -3271,7 +3274,8 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
     Function-form code (a single ``def``) is called with the inputs as positional
     LazyFrames; snippet code reads them as `input_df` (for a single input) or
     `input_df_1`, `input_df_2`, etc. The Polars Code node's builder calls it with
-    ``FLOWFILE_COMPUTE_PROTOCOL`` off.
+    ``FLOWFILE_COMPUTE_PROTOCOL`` off. On a multi-user server it refuses: the code runs
+    on a kernel there, never in core.
 
     Args:
         *flowfile_tables: A variable number of `FlowDataEngine` objects to be
@@ -3280,7 +3284,11 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
 
     Returns:
         A new `FlowDataEngine` instance containing the result of the executed code.
+
+    Raises:
+        PermissionError: On a multi-user server (`FLOWFILE_MODE` docker or server).
     """
+    refuse_in_process_on_server()
     polars_executable = polars_code_parser.get_executable(code, num_inputs=len(flowfile_tables))
     df = polars_executable(*(flowfile_table.data_frame for flowfile_table in flowfile_tables))
     if isinstance(df, pl.DataFrame):

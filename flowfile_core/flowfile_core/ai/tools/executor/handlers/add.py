@@ -467,6 +467,7 @@ def _handle_add_node(
                     output_names=_resolve_output_names(node_type, settings),
                     cache=dry_run_cache,
                     upstream_schemas=upstream_schemas,
+                    node_type=node_type,
                 )
             except Exception as exc:
                 logger.warning("dry-run failed for %s/%s: %s", node_type, settings.node_id, exc)
@@ -477,6 +478,7 @@ def _handle_add_node(
             settings,
             upstream_schemas,
             right_input_node_id=insertion_context.right_input_node_id,
+            flow=flow,
         )
 
     # --- Apply or stage ---

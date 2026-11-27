@@ -25,6 +25,8 @@ export interface BatchProgress {
 
 export interface OwnerRuntime {
   sessionEpoch: number;
+  /** The kernel namespace the results on screen came from; `null` until a run or the kernel says. */
+  namespaceGeneration: string | null;
   batch: BatchProgress | null;
   cells: Record<string, CellRuntime>;
 }
@@ -165,7 +167,9 @@ function ensureCell(owner: OwnerRuntime, cellId: string): CellRuntime {
 }
 
 export function ensureOwner(ownerId: string): OwnerRuntime {
-  if (!owners[ownerId]) owners[ownerId] = { sessionEpoch: 0, batch: null, cells: {} };
+  if (!owners[ownerId]) {
+    owners[ownerId] = { sessionEpoch: 0, namespaceGeneration: null, batch: null, cells: {} };
+  }
   return owners[ownerId];
 }
 
@@ -234,6 +238,9 @@ export function settleExecution(ticket: ExecutionTicket, meta?: SettledMeta): Se
     rt.status = "idle";
     rt.submittedRevision = ticket.revision;
     rt.epoch = ticket.epoch;
+    if (meta?.namespace_generation) {
+      noteNamespace(ticket.ownerId, meta.namespace_generation, ticket.cellId);
+    }
     if (rt.sourceRevision !== ticket.revision) {
       applyStale(rt, "code-changed");
       verdict = "apply-stale";
@@ -249,9 +256,35 @@ export function settleExecution(ticket: ExecutionTicket, meta?: SettledMeta): Se
   return verdict;
 }
 
+export function namespaceGeneration(ownerId: string): string | null {
+  return owners[ownerId]?.namespaceGeneration ?? null;
+}
+
+/**
+ * The kernel namespace this owner now runs in, `null` when the kernel holds none. Results of another
+ * one become "Previous session", except `freshCellId`, the cell whose run just reported it.
+ */
+export function noteNamespace(
+  ownerId: string,
+  generation: string | null,
+  freshCellId?: string,
+): void {
+  const owner = owners[ownerId];
+  if (!owner || owner.namespaceGeneration === generation) return;
+  if (owner.namespaceGeneration !== null) {
+    for (const [cellId, rt] of Object.entries(owner.cells)) {
+      if (cellId !== freshCellId && rt.submittedRevision !== null) {
+        applyStale(rt, "previous-session");
+      }
+    }
+  }
+  owner.namespaceGeneration = generation;
+}
+
 export function bumpSessionEpoch(ownerId: string): number {
   const owner = ensureOwner(ownerId);
   owner.sessionEpoch += 1;
+  owner.namespaceGeneration = null;
   owner.batch = null;
   for (const rt of Object.values(owner.cells)) {
     rt.status = "idle";
