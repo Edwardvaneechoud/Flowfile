@@ -12,7 +12,15 @@ export const LAST_BY_TAB_KEY = "flowfile.catalog.lastLocationByTab.v1";
 
 export type CatalogLocation = Record<string, string>;
 
-const ID_KEYS = ["flowId", "runId", "artifactId", "tableId", "scheduleId", "namespaceId"] as const;
+const ID_KEYS = [
+  "flowId",
+  "runId",
+  "artifactId",
+  "tableId",
+  "scheduleId",
+  "namespaceId",
+  "semanticNamespaceId",
+] as const;
 export type CatalogSelectionKey = (typeof ID_KEYS)[number];
 
 // Ids are opaque and server-authorized; the length cap only stops a hand-edited entry

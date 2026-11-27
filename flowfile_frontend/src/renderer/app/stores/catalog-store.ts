@@ -142,6 +142,7 @@ interface CatalogState {
   loadingArtifactVersions: boolean;
   selectedNamespaceId: number | null;
   selectedNamespace: NamespaceTree | null;
+  selectedSemanticNamespaceId: number | null;
   selectedTableId: number | null;
   selectedTable: CatalogTable | null;
   tablePreview: CatalogTablePreview | null;
@@ -264,6 +265,7 @@ export const useCatalogStore = defineStore("catalog", {
     loadingArtifactVersions: false,
     selectedNamespaceId: null,
     selectedNamespace: null,
+    selectedSemanticNamespaceId: null,
     selectedTableId: null,
     selectedTable: null,
     tablePreview: null,
@@ -1152,6 +1154,21 @@ export const useCatalogStore = defineStore("catalog", {
     clearNamespaceSelection() {
       this.selectedNamespaceId = null;
       this.selectedNamespace = null;
+    },
+
+    selectSemanticModel(namespaceId: number) {
+      this.selectedSemanticNamespaceId = namespaceId;
+      this.selectedFlowId = null;
+      this.selectedRunId = null;
+      this.selectedRunDetail = null;
+      this.clearNamespaceSelection();
+      this.clearTableSelection();
+      this.clearArtifactSelection();
+      this.clearScheduleSelection();
+    },
+
+    clearSemanticSelection() {
+      this.selectedSemanticNamespaceId = null;
     },
 
     // -- Schedule actions --

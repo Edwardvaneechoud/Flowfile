@@ -67,7 +67,7 @@ A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **Kernel ID** | Unique identifier: letters, numbers, hyphens and underscores | — |
+| **Kernel ID** | Unique identifier: letters, numbers, hyphens and underscores. An id that starts with `polars-code-` is refused: those are the kernels Flowfile creates for [Polars code on a multi-user server](nodes/transform.md#polars-code). | — |
 | **Name** | A human-readable display label | — |
 | **Image flavour** | Base, ML, Lite, Notebook, or a custom image URI (see [Kernel images](#kernel-images)) | `Base` |
 | **Packages** | Extra pip packages baked into the kernel's image on top of the flavour (version pins encouraged) | *(none)* |

@@ -388,12 +388,16 @@ class CustomNodeBuildersMixin(GraphMixinBase):
         declared_publishes: list[str] | None = None,
         required_dependencies: list[str] | None = None,
         node_type: str | None = None,
+        named_inputs: bool = True,
     ) -> FlowDataEngine | None:
         """Execute code on a kernel container and return the primary output.
 
         Shared logic for both custom-node kernel execution and python_script nodes.
         Handles artifact context, directory setup, input writing, kernel execution,
         log forwarding, artifact recording, and output reading.
+
+        With ``named_inputs`` off every input goes under ``"main"`` in wiring order, for code that reads its
+        inputs by position only, so no upstream ``node_reference`` is used as a name.
         """
         hold = self._kernel_hold or ambient_kernel_hold.get()
         if hold is not None:
@@ -417,16 +421,14 @@ class CustomNodeBuildersMixin(GraphMixinBase):
             upstream_node_ids=self._get_upstream_node_ids(node_id),
         )
 
-        shared_base = manager.shared_volume_path
-        input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
-        output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
+        input_dir, output_dir = manager.exchange_dirs(kernel_id, flow_id, node_id)
         os.makedirs(input_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
         clear_stale_parquets(input_dir)
         clear_stale_parquets(output_dir)
 
         node = self.get_node(node_id)
-        input_names = self._resolve_input_names(node, len(flow_data_engine))
+        input_names = self._resolve_input_names(node, len(flow_data_engine)) if named_inputs else None
         input_paths = write_inputs_to_parquet(
             flow_data_engine,
             manager,

@@ -345,8 +345,6 @@ import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from "v
 import { EditorView, keymap, type ViewUpdate } from "@codemirror/view";
 import { Extension, Prec } from "@codemirror/state";
 import { Codemirror } from "vue-codemirror";
-import { sql } from "@codemirror/lang-sql";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
@@ -368,6 +366,7 @@ import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { validateCatalogName } from "../../composables/catalogNameValidation";
 import SqlExplorePanel from "./SqlExplorePanel.vue";
+import { catalogTableSchema, sqlEditorExtensions } from "./sqlCompletion";
 
 const emit = defineEmits<{ viewTable: [tableId: number] }>();
 
@@ -531,19 +530,10 @@ const runKeymap = keymap.of([
   },
 ]);
 
-const tableSchema = computed(() => {
-  const schema: Record<string, string[]> = {};
-  for (const t of catalogStore.allTables) {
-    const cols = (t.schema_columns ?? []).map((c) => c.name);
-    schema[t.full_table_name ?? t.name] = cols;
-    if (t.qualified_name) schema[t.qualified_name] = cols;
-  }
-  return schema;
-});
+const tableSchema = computed(() => catalogTableSchema(catalogStore.allTables));
 
 const extensions = computed<Extension[]>(() => [
-  sql({ schema: tableSchema.value, upperCaseKeywords: true }),
-  oneDark,
+  ...sqlEditorExtensions(tableSchema.value),
   Prec.highest(runKeymap),
 ]);
 

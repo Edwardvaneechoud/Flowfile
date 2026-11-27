@@ -27,6 +27,22 @@
           <SharedBadge :access="table.access" />
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
+        <button
+          v-if="semanticLink"
+          class="semantic-link"
+          :class="{ quiet: !semanticLink.facts }"
+          type="button"
+          data-testid="table-semantic-link"
+          @click="openSemantic"
+        >
+          <i class="fa-solid fa-sitemap"></i>
+          <template v-if="semanticLink.facts"
+            >In the semantic model · {{ semanticLink.facts }}
+            {{ semanticLink.facts === 1 ? "fact" : "facts" }}
+            <template v-if="semanticLink.pending"> · {{ semanticLink.pending }} to review</template>
+          </template>
+          <template v-else>Describe this table in the semantic model</template>
+        </button>
       </div>
       <div class="header-actions">
         <button
@@ -473,8 +489,22 @@
 
     <!-- Schema -->
     <div v-if="table.schema_columns && table.schema_columns.length > 0" class="section">
-      <h3>Schema</h3>
-      <div class="schema-table-wrapper">
+      <div class="schema-heading">
+        <h3>Schema</h3>
+        <button
+          v-if="semanticLink && semanticTable"
+          class="schema-semantic-link"
+          type="button"
+          data-testid="schema-open-semantic"
+          @click="openSemantic"
+        >
+          Open in semantic model
+        </button>
+      </div>
+      <div v-if="semanticTable" class="schema-semantic" data-testid="schema-semantic-grid">
+        <SemanticColumnGrid :table="semanticTable" @propose="saveProposal" />
+      </div>
+      <div v-else class="schema-table-wrapper">
         <table class="styled-table schema-table">
           <thead>
             <tr>
@@ -633,6 +663,8 @@ import type {
   DeltaTableHistory,
   TableCdcStatus,
 } from "../../types";
+import { errorText, type SemanticProposal } from "../../types/semantic.types";
+import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { pendingLabel } from "../../utils/catalogCdc";
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
@@ -643,6 +675,9 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { isHubRow } from "./hubRows";
+import SemanticColumnGrid from "./semantic/SemanticColumnGrid.vue";
+import { notePending } from "./semantic/semanticFormat";
+import { useTableSemantics } from "../../composables/useTableSemantics";
 import { recallHistoryRows, rememberHistoryRows } from "./tableHistoryRows";
 
 const showReadByModal = ref(false);
@@ -675,9 +710,38 @@ const emit = defineEmits([
   "editsSaved",
   "restoreVersion",
   "createViz",
+  "openSemanticTable",
 ]);
 
 const isHub = computed(() => isHubRow(props.table));
+
+const catalogStore = useCatalogStore();
+
+const semanticLink = computed(() => {
+  const namespaceId = props.table.namespace_id;
+  if (isHub.value || namespaceId === null || namespaceId === undefined) return null;
+  const m = catalogStore.findTableInTree(props.table.id)?.semantic_model;
+  const pending = m?.pending ?? 0;
+  return { namespaceId, facts: m ? m.accepted + m.pending + m.stale : 0, pending };
+});
+const openSemantic = () => {
+  if (!semanticLink.value) return;
+  emit("openSemanticTable", {
+    namespaceId: semanticLink.value.namespaceId,
+    tableId: props.table.id,
+  });
+};
+
+const { semanticTable, propose: proposeFacts } = useTableSemantics(computed(() => props.table));
+
+async function saveProposal(proposal: SemanticProposal) {
+  try {
+    notePending(await proposeFacts([proposal]));
+  } catch (e) {
+    ElMessage.error(errorText(e, "Could not save the change"));
+  }
+}
+
 // The flow ids are the hub's, so the producer is shown by name and links nowhere.
 const hubProducer = computed(
   () => props.table.producer_registration_name ?? props.table.source_registration_name ?? null,
@@ -1071,6 +1135,28 @@ function formatCell(value: any): string {
   font-weight: var(--font-weight-semibold);
 }
 
+.semantic-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  margin-top: var(--spacing-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.semantic-link.quiet {
+  color: var(--color-text-muted);
+}
+
+.semantic-link:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
 .description {
   margin: var(--spacing-2) 0 0 0;
   color: var(--color-text-secondary);
@@ -1224,6 +1310,34 @@ function formatCell(value: any): string {
   overflow-y: auto;
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
+}
+
+.schema-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+}
+
+.schema-semantic-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.schema-semantic-link:hover {
+  text-decoration: underline;
+}
+
+.schema-semantic {
+  max-height: 480px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  padding: 0 var(--spacing-3);
 }
 
 /* schema-table extends .styled-table */

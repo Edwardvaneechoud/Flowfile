@@ -5,8 +5,8 @@ A catalog kept elsewhere (an Iceberg REST catalog) is an ordinary level-0 ``cata
 catalog no longer lists. ``external_catalogs`` holds one row per such catalog: its address, its warehouse, the kind of
 sign-in and the secret that holds it. Every existing namespace is Flowfile's own (``kept_elsewhere`` false).
 
-Revision ID: 046
-Revises: 045
+Revision ID: 047
+Revises: 046
 Create Date: 2026-11-22
 """
 
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "046"
-down_revision: str | None = "045"
+revision: str = "047"
+down_revision: str | None = "046"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

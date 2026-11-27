@@ -148,7 +148,7 @@ def test_the_migration_adds_the_table_and_the_two_columns():
     assert {"kept_elsewhere", "gone_since"} <= columns
     assert {"namespace_id", "uri", "warehouse", "sign_in", "client_id", "scope", "token_endpoint", "secret_id",
             "synced_at", "sync_error", "not_shown"} <= table
-    assert revision >= "046"
+    assert revision >= "047"
 
 
 def _flow(stem: str) -> int:

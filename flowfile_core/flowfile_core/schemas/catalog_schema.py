@@ -28,6 +28,7 @@ from pydantic import (
 )
 
 from flowfile_core.flowfile.param_types import FlowParameter
+from flowfile_core.schemas.semantic_schema import SemanticModelSummary
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
 from shared.models import RunType
@@ -263,9 +264,12 @@ class NamespaceTree(NamespaceOut):
     this machine's catalogs on a server joined to a hub with keys of its own: the Catalog panel and the catalog
     reader's and writer's pickers leave them out, while the flow pickers still find them. ``unavailable_reason`` says
     why this Flowfile cannot use a hub catalog's tables (on the hub's own disk, or on storage it does not write).
+    ``semantic_model`` counts the semantic-model facts at or under the namespace (``None`` when the ledger is
+    unavailable, and on a hub's rows).
     """
 
     place: str | None = None
+    semantic_model: SemanticModelSummary | None = None
     offered: bool = True
     unavailable_reason: str | None = None
     children: list["NamespaceTree"] = Field(default_factory=list)
@@ -683,6 +687,8 @@ class CatalogTableOut(BaseModel):
     full_table_name: str | None = None
     # Fully-qualified ``catalog.schema.table`` (full_table_name is only 2-part ``schema.table``).
     qualified_name: str | None = None
+    # Semantic-model fact counts for this table; set only on the tables of a namespace tree.
+    semantic_model: SemanticModelSummary | None = None
     description: str | None = None
     owner_id: int
     file_exists: bool = True

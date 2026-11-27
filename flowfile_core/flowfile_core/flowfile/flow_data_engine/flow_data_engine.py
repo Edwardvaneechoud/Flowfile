@@ -59,7 +59,10 @@ from flowfile_core.flowfile.flow_data_engine.join import (
     rename_df_table_for_join,
     verify_join_select_integrity,
 )
-from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
+    polars_code_parser,
+    refuse_in_process_on_server,
+)
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCreateFetcher,
@@ -3271,7 +3274,8 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
     Function-form code (a single ``def``) is called with the inputs as positional
     LazyFrames; snippet code reads them as `input_df` (for a single input) or
     `input_df_1`, `input_df_2`, etc. The Polars Code node's builder calls it with
-    ``FLOWFILE_COMPUTE_PROTOCOL`` off.
+    ``FLOWFILE_COMPUTE_PROTOCOL`` off. On a multi-user server it refuses: the code runs
+    on a kernel there, never in core.
 
     Args:
         *flowfile_tables: A variable number of `FlowDataEngine` objects to be
@@ -3280,7 +3284,11 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
 
     Returns:
         A new `FlowDataEngine` instance containing the result of the executed code.
+
+    Raises:
+        PermissionError: On a multi-user server (`FLOWFILE_MODE` docker or server).
     """
+    refuse_in_process_on_server()
     polars_executable = polars_code_parser.get_executable(code, num_inputs=len(flowfile_tables))
     df = polars_executable(*(flowfile_table.data_frame for flowfile_table in flowfile_tables))
     if isinstance(df, pl.DataFrame):

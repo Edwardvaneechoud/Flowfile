@@ -200,13 +200,19 @@ def dry_run_code(
     output_names: list[str],
     cache: DryRunCache,
     upstream_schemas: dict[int, list[FlowfileColumn]],
+    node_type: str | None = None,
 ) -> list[FlowfileColumn]:
     """Dry-run ``code`` on a 1-row sample of the upstream, return predicted schema.
 
     Raises ``RuntimeError`` if no upstream sample can be resolved (caller should
     have screened via the upstream-tier handler before calling) or if the kernel
-    dry-run fails.
+    dry-run fails. A ``polars_code`` node on a multi-user server raises it too,
+    before anything runs: its code runs only on its owner's kernel, in a run.
     """
+    from shared.storage_config import is_server_mode
+
+    if node_type == "polars_code" and is_server_mode():
+        raise RuntimeError("On this server Polars Code's columns are known once it has run")
     if not upstream_node_ids:
         raise RuntimeError("dry_run_code requires at least one upstream node id")
 

@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from flowfile_core.ai.chart_profile import profile_table, render_profile
+from flowfile_core.ai.chart_profile import TableProfile, private_warning, profile_table, render_profile
 from flowfile_core.ai.chart_request import (
     DEFAULT_TIMEOUT_SECONDS,
     MAX_PROMPT_LEN,
@@ -94,6 +94,28 @@ def _profile_warning(problem: str) -> str:
     )
 
 
+def without_private_filters(chart: Any, profile: TableProfile) -> tuple[Any, list[str]]:
+    """``chart`` (a chart request as sent) without its filters on columns kept from AI, whose values they carry."""
+    kept = {c.name for c in profile.columns if c.private}
+    filters = chart.get("filters") if isinstance(chart, dict) else None
+    if not kept or not isinstance(filters, list):
+        return chart, []
+    dropped = [f for f in filters if isinstance(f, dict) and f.get("field") in kept]
+    if not dropped:
+        return chart, []
+    names = ", ".join(f'"{n}"' for n in sorted({f["field"] for f in dropped}))
+    return {**chart, "filters": [f for f in filters if f not in dropped] or None}, [
+        f"The current chart's filters on {names} were not sent to the model: the column is kept from AI."
+    ]
+
+
+def profile_warnings(profile: TableProfile) -> list[str]:
+    """The warnings a profile adds to a response: statistics that fell back, columns kept from AI."""
+    out = [] if profile.complete else [_profile_warning(profile.problem or "unknown error")]
+    private = private_warning(profile)
+    return [*out, private] if private else out
+
+
 @router.post("/generate_chart", response_model=ChartGenerationResponse, tags=["ai"])
 async def generate_chart_route(
     body: GenerateChartRequest,
@@ -108,18 +130,20 @@ async def generate_chart_route(
 
     share_values = body.send_values and send_data_allowed()
     profile = await profile_table(table, current_user, share_values=share_values)
-    warnings = [] if profile.complete else [_profile_warning(profile.problem or "unknown error")]
+    warnings = profile_warnings(profile)
+    current_chart, dropped = without_private_filters(body.current_chart, profile)
+    warnings += dropped
     result = await generate_chart(
         prompt=body.prompt,
         columns=profile.column_infos(),
         profile_text=render_profile(profile),
         provider=provider,
         user_id=current_user.id,
-        current_chart=body.current_chart,
+        current_chart=current_chart,
         warnings=warnings,
         timeout=body.timeout,
     )
     return answered_by(result, provider)
 
 
-__all__ = ["router", "GenerateChartRequest", "answered_by"]
+__all__ = ["router", "GenerateChartRequest", "answered_by", "profile_warnings", "without_private_filters"]

@@ -420,6 +420,71 @@ async def gather_evidence(
     return found
 
 
+@dataclass(frozen=True)
+class PrivateSplit:
+    """``kpis`` and ``charts`` are the items to measure, ``evidence`` the "withheld" items for the rest, and
+    ``shown_charts`` every chart without its filters on a kept column (a filter carries values)."""
+
+    kpis: list[PlannedKpi]
+    charts: list[StoryChart]
+    evidence: list[Evidence]
+    shown_charts: list[StoryChart]
+    warnings: list[str]
+
+
+def _strings(value: Any) -> set[str]:
+    """Every string anywhere in ``value`` (a query, a chart request), for finding the columns it names."""
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, list):
+        return {s for v in value for s in _strings(v)}
+    return {value} if isinstance(value, str) else set()
+
+
+def keep_private(
+    *,
+    tables: dict[int, Any],
+    withheld: Any,
+    kpis: Sequence[PlannedKpi],
+    charts: Sequence[StoryChart],
+    measuring: bool = True,
+) -> PrivateSplit:
+    """Split the story's items by the columns ``withheld`` (``confidentiality.Withheld``) keeps from AI.
+
+    No evidence query selects, groups by or filters on a kept column: a KPI over one, and a chart whose query, chart
+    request or relation names one, is not measured; nor is anything of a table kept whole.
+    """
+    out = PrivateSplit([], [], [], [], [])
+
+    def kept(item: PlannedKpi | StoryChart, kind: str, title: str, names: set[str]) -> set[str]:
+        """The kept columns among ``names``; the item is held back (with a warning) when it may not be measured."""
+        columns = [c.name for c in getattr(tables.get(item.table_id), "schema_columns", None) or []]
+        found = set(withheld.names(item.table_id, [c for c in columns if c in names]))
+        if found or withheld.whole_table(item.table_id):
+            out.evidence.append(Evidence(item.id, kind, "withheld", detail="it reads a column kept from AI"))
+            if measuring:
+                what = ", ".join(f'"{n}"' for n in sorted(found)) or "its table"
+                out.warnings.append(f"{title}: not measured, {what} is kept from AI.")
+        else:
+            (out.kpis if kind == "kpi" else out.charts).append(item)
+        return found
+
+    for kpi in kpis:
+        kept(kpi, "kpi", f'KPI "{kpi.label}"', _strings(kpi.field))
+    for chart in charts:
+        request = chart.chart.model_dump()
+        relation = chart.relation.model_dump() if chart.relation is not None else None
+        found = kept(chart, "chart", f'"{chart.title}"', _strings([chart.payload, request, relation]))
+        filters = request.get("filters") or []
+        shown = [f for f in filters if f.get("field") not in found]
+        if len(shown) != len(filters):
+            new_request = ChartRequest.model_validate({**request, "filters": shown or None})
+            chart = chart.model_copy(update={"chart": new_request})
+            out.warnings.append(f'"{chart.title}": its filters on kept columns were not sent to the model.')
+        out.shown_charts.append(chart)
+    return out
+
+
 def withheld_evidence(kpis: Sequence[PlannedKpi], charts: Sequence[StoryChart]) -> list[Evidence]:
     return [
         *(Evidence(k.id, "kpi", "withheld") for k in kpis),
@@ -840,12 +905,14 @@ __all__ = [
     "Evidence",
     "EvidenceNote",
     "LeftOut",
+    "PrivateSplit",
     "StoryChart",
     "StoryChartOut",
     "StoryFailure",
     "aggregate_query",
     "check_story",
     "gather_evidence",
+    "keep_private",
     "kpi_payload",
     "relation_sql",
     "relation_words",

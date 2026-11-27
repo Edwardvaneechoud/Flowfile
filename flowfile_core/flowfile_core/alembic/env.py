@@ -16,12 +16,18 @@ if config.config_file_name is not None and config.attributes.get("configure_logg
 target_metadata = Base.metadata
 
 
+def _include_name(name: str | None, type_: str, parent_names: dict) -> bool:
+    """Leave the semantic ledger's tables out of autogenerate: glosslayer owns them (migration 046), not ``Base``."""
+    return not (type_ == "table" and name is not None and name.startswith("gloss_"))
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (emit SQL without connecting)."""
     url = get_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
+        include_name=_include_name,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,
@@ -44,6 +50,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            include_name=_include_name,
             render_as_batch=True,
         )
         with context.begin_transaction():

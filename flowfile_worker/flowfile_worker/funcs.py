@@ -530,13 +530,15 @@ def polars_code(
     """Run a Polars Code node's code once over its input plans, for ``POST /v1/ops/polars_code``.
 
     The code runs in the ``shared.polars_code_parser`` sandbox over the plans of *inputs*, in order, and its result
-    is queued as ``_user_code_result`` reports it. *polars_serializable_object* is not read.
+    is queued as ``_user_code_result`` reports it. *polars_serializable_object* is not read. On a multi-user server
+    the job fails with ``PermissionError`` before anything is loaded: the code runs on a kernel there.
     """
-    from shared.polars_code_parser import polars_code_parser
+    from shared.polars_code_parser import polars_code_parser, refuse_in_process_on_server
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting Polars code over {len(inputs)} inputs")
     try:
+        refuse_in_process_on_server()
         frames = [_load_plan(plan) for plan in inputs]
         result = polars_code_parser.get_executable(code, num_inputs=len(inputs))(*frames)
         reported = _user_code_result(result, file_path)

@@ -13,6 +13,8 @@ runs on the worker, and with the flag off it stays on ``local`` and runs in core
 which is why it comes last. The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs
 whole on the worker, and with its nodes alternating between the worker and ``local`` runs whole on the worker too:
 core, which serves, runs nothing on ``local``, so each of those nodes falls back to the worker, its row saying so.
+The flow's Polars Code step is a formula step in those runs: on a server that step runs on a kernel, which reads its
+inputs from core's disk, so with the step as saved the run is refused before any node starts.
 Data crossing between two backends needs a process that does not serve, as
 ``flowfile_core/tests/flowfile/execution/test_mixed_placement.py`` runs it. A scheduled run's child computes on the
 worker embedded in it, inside core's container, while the worker container serves nothing.
@@ -503,6 +505,12 @@ COMPLEX_ROWS = {
     "combined_aggregations.csv": 52,
 }
 COMPLEX_FLOW_IDS = {"worker": 7404, "alternating": 7405}
+POLARS_CODE_FLOW_ID = 7407
+POLARS_CODE_NODE = 32
+DERIVED_COLUMN = {
+    "field": {"name": "sales_per_transaction", "data_type": "Auto"},
+    "function": "[total_sales] / [num_transactions]",
+}
 ALTERNATING = {
     **dict.fromkeys((1, 2, 4, 5, 12, 14, 17, 26, 27, 30, 41, 72, 73, 74, 9999), "worker"),
     **dict.fromkeys((3, 11, 13, 15, 16, 28, 29, 31, 32, 42, 43, 51, 52, 61, 71), "local"),
@@ -515,14 +523,22 @@ def complex_outputs(stack: Stack, exchange: None) -> None:
     stack.minio.create_bucket(Bucket=COMPLEX_BUCKET)
 
 
-def _complex_flow(flow_id: int, locations: dict[int, str] | None = None) -> dict:
-    """The elaborate flow from its file, its writers under ``<bucket>/<flow id>/``, each node placed per ``locations``."""
+def _complex_flow(flow_id: int, locations: dict[int, str] | None = None, *, polars_code: bool = False) -> dict:
+    """The elaborate flow from its file, its writers under ``<bucket>/<flow id>/``, each node placed per ``locations``.
+
+    Its Polars Code step becomes a formula step unless ``polars_code``: on a server that step needs a kernel on
+    core's host, which this stack has none of.
+    """
     flow = json.loads(COMPLEX_FLOW.read_text())
     flow["flowfile_id"] = flow_id
     for node in flow["nodes"]:
         if node["type"] == "cloud_storage_writer":
             storage = node["setting_input"]["cloud_storage_settings"]
             storage["resource_path"] = storage["resource_path"].replace("/out/", f"/{flow_id}/")
+        if node["id"] == POLARS_CODE_NODE and not polars_code:
+            node["type"] = "formula"
+            del node["setting_input"]["polars_code_input"]
+            node["setting_input"].update(function=DERIVED_COLUMN, functions=[DERIVED_COLUMN])
         if locations is not None:
             node["setting_input"]["execution_location"] = locations[node["id"]]
     return flow
@@ -567,6 +583,24 @@ def test_the_elaborate_flow_runs_whole_on_a_worker_that_shares_no_volume_with_co
         }
         serving = ("worker", "local", "this core serves; compute runs on its worker")
         assert moved == {node: serving for node, on in ALTERNATING.items() if on == "local"}
+
+
+def test_a_polars_code_step_is_refused_on_a_worker_that_shares_no_volume_with_core(stack, exchange, complex_outputs):
+    """On a server Polars Code runs on a kernel, which reads its inputs from core's disk, so no node starts."""
+    stack = _core_with_protocol(stack, "1")
+    flow_id = _import_flow(stack, _complex_flow(POLARS_CODE_FLOW_ID, polars_code=True))
+    assert flow_id == POLARS_CODE_FLOW_ID
+
+    run = _run(stack, flow_id)
+
+    assert run["success"] is False, _logs()
+    failures = failed_nodes(run)
+    assert list(failures) == [POLARS_CODE_NODE], failures
+    reason = 'cannot run on backend "worker": it writes local files; it runs on a kernel, which reads its inputs'
+    assert failures[POLARS_CODE_NODE].startswith(reason), failures
+    assert run["nodes"][POLARS_CODE_NODE]["compute_error"] == "Refusal"
+    assert run["nodes_completed"] == 0
+    assert stack.minio.list_objects_v2(Bucket=COMPLEX_BUCKET, Prefix=f"{flow_id}/")["KeyCount"] == 0
 
 
 @pytest.mark.parametrize("protocol", ["1", "0"], ids=["flag-on", "flag-off"])

@@ -314,6 +314,16 @@ input_df.filter(pl.col('Age') > 30)
 
 The code runs where the flow runs, on the worker or, for a local run, in Flowfile's own process, and it runs once over the node's inputs, so code that collects an input, reads a value of it or writes a file does that there, once, as a script would. Before the node has run, the designer predicts its columns by running the code once more over an empty frame of each input, so code that reads a value of its input shows its columns once the node has run.
 
+**On a multi-user server**
+
+On a server that runs with `FLOWFILE_MODE` set to `docker` or `server`, the code runs in a Docker [kernel](../kernels.md) of your own instead, listed among your kernels as **Polars Code**. Flowfile creates and starts it on your first run, which also pulls the kernel image when the server does not have it yet. The code is accepted and refused by the same rules, and these things differ:
+
+- The node's inputs and its output travel as Parquet files, and the code computes with the CPU and memory the server gives the kernel, 2 CPU and 4 GB by default.
+- The designer never runs the code to predict columns. The node, and the nodes after it, show their columns once it has run.
+- The code sees its inputs and none of the server's files. Reading a file by path, or object storage with the server's own credentials, does not work there; a **Read data** or **Read from cloud provider** node before it does that.
+- A row index the code adds is `UInt32`, since the kernel runs Polars' 32-bit index runtime.
+- On a server without Docker the node fails with `On this server Polars Code runs on a kernel, and Docker is not available`.
+
 ## ![Python Script](../../../assets/images/nodes/python_code.svg){ width="44" height="44" } Python Script
 
 Executes Python in an isolated Docker [kernel](../kernels.md) container, with a notebook-style editor of multiple cells, named inputs and outputs, variables that persist across executions within a flow, and the `flowfile` API for data I/O, artifacts, display and logging.

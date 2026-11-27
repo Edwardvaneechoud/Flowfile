@@ -2,7 +2,7 @@
 
 ``requirements_for`` reads only a node's ``NodeTemplate`` and settings model: no database, no registry, no backend.
 Each family answers what its builder does on the backend. A node that only submits a plan, or works in core, needs
-nothing.
+nothing. One family also depends on the process: on a multi-user server Polars Code runs on a kernel.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from shared.cloud_storage.uri import storage_type_for_uri
 from shared.cloud_storage.utils import validate_cloud_resource_path
 from shared.db_dialects import get_dialect_or_generic
 from shared.path_utils import is_cloud_path, is_url, is_utf8_encoding
+from shared.storage_config import is_server_mode
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.storage_backend import CatalogStorageTarget
@@ -43,8 +44,8 @@ class NodeRequirements:
         credentials: Names of the stored connections it uses. Secret names are not connections.
         python_function: Its plan may carry a Python function serialised under core's Python, so it runs only where
             that Python does: a formula-family node, or a cloud or catalog change read.
-        needs_kernel: It runs on a notebook kernel, which reads its inputs from the kernel shared volume, a ``file``
-            location on core's Docker host.
+        needs_kernel: It runs on a kernel, which reads its inputs from a folder on core's Docker host, a ``file``
+            location.
     """
 
     operation: OperationKind | None = None
@@ -109,6 +110,8 @@ def requirements_for(
         return NodeRequirements(
             operation=OperationKind.ml_apply, read_schemes=frozenset({artifact_scheme}) if fetches else frozenset()
         )
+    if _polars_code_on_a_kernel(template):
+        return _ON_KERNEL
     fixed = _BY_TEMPLATE.get(template.item)
     if fixed is not None:
         return fixed
@@ -136,9 +139,19 @@ def _names(*names: str | None) -> frozenset[str]:
     return frozenset(name for name in names if name)
 
 
+def _polars_code_on_a_kernel(template: NodeTemplate) -> bool:
+    """Whether the node is Polars Code on a multi-user server, where its builder runs it on the person's kernel."""
+    return template.item == "polars_code" and is_server_mode()
+
+
 def _kernel_by_template(template: NodeTemplate) -> bool:
-    """Whether the template alone puts the node on a kernel: a Python Script node or a kernel custom node."""
-    return template.item == "python_script" or bool(template.custom_node and template.execution_environment == "kernel")
+    """Whether the template alone puts the node on a kernel: a Python Script node, a kernel custom node, or Polars
+    Code on a multi-user server."""
+    return (
+        template.item == "python_script"
+        or _polars_code_on_a_kernel(template)
+        or bool(template.custom_node and template.execution_environment == "kernel")
+    )
 
 
 def _custom_node(template: NodeTemplate, settings: input_schema.UserDefinedNode) -> NodeRequirements:

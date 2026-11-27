@@ -2,6 +2,7 @@
 // The table panel for a hub table: no Hub badge, and no "Read by" card, whose flow ids are the hub's and would open a
 // local flow of the same id; a local table keeps both as before. Its saved charts are listed as a local table's.
 import { defineComponent, h, reactive, type FunctionalComponent } from "vue";
+import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../__fixtures__/catalogTree";
 import { element, mountIn, settle, text } from "../../__fixtures__/mount";
@@ -9,6 +10,9 @@ import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../..
 
 vi.mock("../../api/catalog.api", () => ({
   CatalogApi: { getTableCdc: vi.fn(), resetCdcCursor: vi.fn(), deleteCdcCursor: vi.fn() },
+}));
+vi.mock("../../api/semanticModel.api", () => ({
+  SemanticModelApi: { get: vi.fn(async () => ({ tables: [] })) },
 }));
 vi.mock("../../composables/useResourceSharing", () => ({
   useResourceSharing: () => ({
@@ -81,6 +85,7 @@ const metaLabels = () =>
 describe("TableDetailPanel", () => {
   // The node runtime under happy-dom has no localStorage of its own.
   beforeEach(() => {
+    setActivePinia(createPinia());
     const data = new Map<string, string>();
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => data.get(key) ?? null,

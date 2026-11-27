@@ -38,12 +38,15 @@ A project folder holds YAML files of your resources:
 | `namespaces.yaml`, `models.yaml`, `kernels.yaml` | Catalog metadata manifests. |
 | `.gitignore` | Guards against committing secrets and local data. |
 
-A chart's or dashboard's file is named after it (`Sales overview` becomes `dashboards/Sales_overview.dashboard.yaml`). Renaming one moves its file; the id inside the file keeps it the same chart or dashboard. Two with the same name get the start of their id added to the file name.
+A chart's, dashboard's or table's file is named after it (`Sales overview` becomes `dashboards/Sales_overview.dashboard.yaml`). Renaming one moves its file; the id inside the file keeps it the same chart or dashboard. Two with the same name get the start of their id added to the file name; two tables whose names differ only in letter case get a short hash of their key added.
 
 A table's file is named after its catalog, schema and name, joined with dots (`orders` in `sales.raw` becomes `tables/sales.raw.orders.table.yaml`). A name with characters a file name cannot hold, a very long name, or a name another table's file already has (one differing only in letter case, say) gets a short hash added.
 
 !!! note "Folders saved before charts, dashboards and tables had their own files"
     Project format 2 and older kept every chart in one `visualizations.yaml` and every dashboard in one `dashboards.yaml`, and format 3 and older kept every catalog table in one `tables.yaml`. Such a folder still opens and reads as unchanged. Its next save, or a restore, writes the files above, removes those lists, and sets the format to 4. A Flowfile that reads only an older format then refuses the folder with "written by a newer Flowfile", so upgrade every machine that opens the project before you save from the new version. Releases from before that check exist do not refuse it and read the folder as holding no charts, dashboards or tables.
+
+!!! note "Folders saved before tables had their own files"
+    Project format 3 and older kept every catalog table in one `tables.yaml`. Such a folder still opens and reads as unchanged. Its next save writes one file per table under `tables/`, removes `tables.yaml`, and sets the format to 4. A Flowfile from before format 4 refuses the folder with "written by a newer Flowfile", so upgrade every machine that opens the project before you save from the new version. With one file per table, two people who change different tables no longer change the same file.
 
 ## What a version holds
 

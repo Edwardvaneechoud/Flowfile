@@ -47,6 +47,9 @@ services:
       - FLOWFILE_KERNEL_IMAGE_BASE=${FLOWFILE_KERNEL_IMAGE_BASE:-}
       - FLOWFILE_KERNEL_IMAGE_ML=${FLOWFILE_KERNEL_IMAGE_ML:-}
       - FLOWFILE_KERNEL_IMAGE_LITE=${FLOWFILE_KERNEL_IMAGE_LITE:-}
+      # Size of the kernel each person's Polars code runs on; empty means 2 CPU and 4 GB. See .env.example.
+      - FLOWFILE_POLARS_CODE_KERNEL_CPU=${FLOWFILE_POLARS_CODE_KERNEL_CPU:-}
+      - FLOWFILE_POLARS_CODE_KERNEL_MEMORY_GB=${FLOWFILE_POLARS_CODE_KERNEL_MEMORY_GB:-}
       # Whether AI features may send data values to a model. See .env.example.
       - FLOWFILE_AI_SEND_DATA=${FLOWFILE_AI_SEND_DATA:-true}
       # Anonymous usage telemetry — hard-off by default in multi-user deployments. See .env.example.

@@ -17,6 +17,7 @@ from flowfile_core.catalog.exceptions import (
     SeededNamespaceError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.semantic import host as semantic
 from flowfile_core.catalog.serializers import artifact_to_out
 from flowfile_core.catalog.services.external_catalogs import gone_sentence
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
@@ -248,6 +249,9 @@ class NamespaceService:
         storage_given = storage_uri is not STORAGE_UNSET or storage_connection_name is not STORAGE_UNSET
         if namespace.kept_elsewhere and storage_given:
             raise KeptElsewhereError(namespace.name, "keep its tables in storage of its own")
+        renamed = name is not None and name != namespace.name
+        old_path = self.resolve_namespace_path(namespace_id) if renamed else None
+        old_keys = self._table_keys_under(namespace_id) if renamed else []
         if name is not None:
             namespace.name = name
         if description is not None:
@@ -276,7 +280,21 @@ class NamespaceService:
                 namespace.storage_connection_name = new_conn
 
         updated = self.repo.update_namespace(namespace)
+        if renamed:
+            new_keys = self._table_keys_under(namespace_id)
+            semantic.on_namespace_renamed(
+                old_path, self.resolve_namespace_path(namespace_id), list(zip(old_keys, new_keys, strict=True))
+            )
         return updated
+
+    def _table_keys_under(self, namespace_id: int) -> list[str]:
+        """Qualified names of the tables in a namespace and its schemas, in a stable order."""
+        ns_ids = [namespace_id] + sorted(c.id for c in self.repo.list_child_namespaces(namespace_id))
+        keys = []
+        for ns_id in ns_ids:
+            path = self.resolve_namespace_path(ns_id)
+            keys += [f"{path}.{t.name}" for t in sorted(self.repo.list_tables(namespace_id=ns_id), key=lambda t: t.id)]
+        return keys
 
     def _is_seeded(self, namespace: CatalogNamespace) -> bool:
         """Whether ``namespace`` is the root catalog or one of the schemas the application keeps under it."""

@@ -40,6 +40,7 @@ from flowfile_core.catalog.exceptions import (
     TableNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.semantic import host as semantic
 from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
@@ -1597,6 +1598,7 @@ class TableService:
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
+        old_key = format_full_name(self._namespaces.resolve_namespace_path(table.namespace_id), table.name)
         if name is not None:
             table.name = name
         if description is not None:
@@ -1614,7 +1616,10 @@ class TableService:
         # Not a data change: suppress updated_at's onupdate, so table-trigger schedules don't fire.
         flag_modified(table, "updated_at")
         table = self.repo.update_table(table)
-        return self.table_to_out(table)
+        out = self.table_to_out(table)
+        # The repository has committed; a description-only update (glosslayer's write-back) never re-keys.
+        semantic.on_table_renamed(old_key, out.qualified_name)
+        return out
 
     def delete_table(self, table_id: int, delete_file: bool = False) -> None:
         """Delete a catalog table; optionally delete its materialized storage.
@@ -1629,7 +1634,9 @@ class TableService:
             raise TableNotFoundError(table_id=table_id)
 
         file_path = table.file_path
+        key = format_full_name(self._namespaces.resolve_namespace_path(table.namespace_id), table.name)
         self.repo.delete_table(table_id)
+        semantic.on_table_deleted(key)
 
         if delete_file and file_path and _is_managed_table_path(file_path):
             try:
