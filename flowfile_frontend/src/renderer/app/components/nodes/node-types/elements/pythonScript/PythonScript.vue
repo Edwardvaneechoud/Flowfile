@@ -354,7 +354,7 @@ import { AI_GENERATE_CODE_ENABLED as aiGenerateEnabled } from "../../../../../st
 import { scanCatalogRefs } from "./dataframeSchemaInference";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
-import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
+import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE, pickDefaultKernel } from "./utils";
 import { useCollapsedSections } from "./useCollapsedSections";
 import { useUpstreamColumns } from "./useUpstreamColumns";
 
@@ -871,6 +871,13 @@ const loadNodeData = async (nodeId: number) => {
       dataLoaded.value = true;
 
       await loadKernels();
+      if (!selectedKernelId.value) {
+        const defaultKernel = pickDefaultKernel(kernels.value);
+        if (defaultKernel) {
+          selectedKernelId.value = defaultKernel.id;
+          nodePythonScript.value!.python_script_input.kernel_id = defaultKernel.id;
+        }
+      }
       startKernelPolling();
       loadArtifacts();
       loadFlowRunDisplayOutputs();
