@@ -267,6 +267,65 @@ def test_namespace_tree_filtering(users, client_for, alice_catalog, team, grant_
     assert public_id  # silence unused
 
 
+def _tree_nodes(client) -> dict[int, dict]:
+    nodes: dict[int, dict] = {}
+
+    def walk(level):
+        for node in level:
+            nodes[node["id"]] = node
+            walk(node["children"])
+
+    walk(client.get("/catalog/namespaces/tree").json())
+    return nodes
+
+
+def test_the_tree_says_who_may_manage_each_namespace(
+    users, client_for, alice_catalog, team, grant_factory, resource_factory
+):
+    """The owner or a manage grant on the namespace itself, as core's changes require; public grants writing only."""
+    alice_id = users["alice"].id
+    public_id = resource_factory(
+        db_models.CatalogNamespace, name="PublicManaged", parent_id=None, level=0, owner_id=alice_id, is_public=True
+    )
+    public_schema = resource_factory(
+        db_models.CatalogNamespace, name="open", parent_id=public_id, level=1, owner_id=alice_id, is_public=True
+    )
+    carol = client_for("carol")
+    seen = _tree_nodes(carol)
+    assert (seen[public_id]["can_manage"], seen[public_schema]["can_manage"]) == (False, False)
+    assert (seen[public_id]["can_write"], seen[public_schema]["can_write"]) == (True, True)
+    assert carol.delete(f"/catalog/namespaces/{public_schema}").status_code == 403
+    created = carol.post("/catalog/namespaces", json={"name": "carols", "parent_id": public_id})
+    assert created.status_code == 201, "a public catalog stopped being writable"
+    assert _tree_nodes(carol)[created.json()["id"]]["can_manage"] is True
+    assert carol.delete(f"/catalog/namespaces/{created.json()['id']}").status_code == 204
+
+    owner = _tree_nodes(client_for("alice"))
+    ids = (public_id, public_schema, alice_catalog["catalog"], alice_catalog["schema"])
+    assert all(owner[i]["can_manage"] and owner[i]["can_write"] for i in ids)
+    admin = _tree_nodes(client_for("admin"))[public_schema]
+    assert (admin["can_manage"], admin["can_write"]) == (True, True)
+
+    grant_factory("catalog_namespace", alice_catalog["catalog"], team, permission="use", granted_by=alice_id)
+    grant_factory("catalog_namespace", alice_catalog["schema"], team, permission="manage", granted_by=alice_id)
+    bob = _tree_nodes(client_for("bob"))
+    catalog, schema = bob[alice_catalog["catalog"]], bob[alice_catalog["schema"]]
+    assert (catalog["can_manage"], schema["can_manage"]) == (False, True)
+    assert (catalog["can_write"], schema["can_write"]) == (False, True)
+
+
+def test_a_breadcrumb_of_a_granted_table_is_neither_writable_nor_managed(
+    users, client_for, alice_catalog, team, grant_factory
+):
+    grant_factory("catalog_table", alice_catalog["table"], team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    seen = _tree_nodes(bob)
+    for ns_id in (alice_catalog["catalog"], alice_catalog["schema"]):
+        assert (seen[ns_id]["can_write"], seen[ns_id]["can_manage"]) == (False, False)
+    refused = bob.post("/catalog/namespaces", json={"name": "bobs", "parent_id": alice_catalog["catalog"]})
+    assert refused.status_code == 403, "the tree called writable a namespace core refuses writes to"
+
+
 def test_revoked_grant_loses_access(users, client_for, alice_catalog, team, client_for_admin=None):
     alice = client_for("alice")
     share = _share(alice, "catalog_table", alice_catalog["table"], team)

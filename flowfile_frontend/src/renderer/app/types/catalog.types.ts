@@ -134,6 +134,13 @@ export interface NamespaceTree extends CatalogNamespace {
   visualizations: CatalogVisualization[];
   notebooks: NotebookSummary[];
   semantic_model?: SemanticModelSummary | null;
+  // False where the person has no semantic model to open here (core decides; absent means true).
+  semantic_model_readable?: boolean;
+  // False where the person may not rename, delete, share or re-store it, as on a public namespace they do not own;
+  // writing into it is another matter (absent means true).
+  can_manage?: boolean;
+  // Whether the person may create schemas, flows, tables and the like in it; core's answer for this machine's rows.
+  can_write?: boolean;
 }
 
 // System-managed schemas under "General" that users never pick as a store target.

@@ -44,7 +44,7 @@
       </div>
       <div v-if="!isHub" class="tree-actions" @click.stop>
         <button
-          v-if="isMultiUser && isOwned(node)"
+          v-if="isMultiUser && isOwned(node) && node.can_manage !== false"
           class="action-btn"
           title="Share namespace"
           @click="$emit('namespaceShare', node)"
@@ -52,7 +52,7 @@
           <i class="fa-solid fa-share-nodes"></i>
         </button>
         <button
-          v-if="node.level === 0 && !keptElsewhere"
+          v-if="node.level === 0 && node.can_write !== false && !keptElsewhere"
           class="action-btn"
           title="Add schema"
           @click="$emit('createSchema', node.id)"
@@ -60,7 +60,7 @@
           <i class="fa-solid fa-plus"></i>
         </button>
         <button
-          v-if="node.level === 1 && !keptElsewhere"
+          v-if="node.level === 1 && node.can_write !== false && !keptElsewhere"
           class="action-btn"
           title="Register table"
           @click="$emit('registerTable', node.id)"
@@ -68,7 +68,7 @@
           <i class="fa-solid fa-table"></i>
         </button>
         <button
-          v-if="node.level === 1 && !keptElsewhere"
+          v-if="node.level === 1 && node.can_write !== false && !keptElsewhere"
           class="action-btn"
           title="Register flow"
           @click="$emit('registerFlow', node.id)"
@@ -554,7 +554,12 @@ function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
 
 // A schema's model only; a catalog's joins across schemas live on the catalog's page.
 const showSemanticEntry = computed(
-  () => props.node.level === 1 && !isHub.value && reason.value === null && !searching.value,
+  () =>
+    props.node.level === 1 &&
+    !isHub.value &&
+    reason.value === null &&
+    !searching.value &&
+    props.node.semantic_model_readable !== false,
 );
 const semanticPending = computed(() => props.node.semantic_model?.pending ?? 0);
 
@@ -628,6 +633,7 @@ const canDeleteSchema = computed(
     !SYSTEM_NAMESPACE_NAMES.has(props.node.name) &&
     !isSeededSchema(props.node, catalogStore.tree) &&
     canManage(props.node) &&
+    props.node.can_manage !== false &&
     isEmptySchema(props.node),
 );
 
