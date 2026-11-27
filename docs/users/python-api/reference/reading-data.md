@@ -180,7 +180,7 @@ df = ff.read_from_cloud_storage(
 **Parameters:**
 
 - `source`: Cloud storage path (e.g., `s3://bucket/path/file.parquet`)
-- `file_format`: `"csv"`, `"parquet"`, `"json"`, or `"delta"` (default: `"parquet"`)
+- `file_format`: `"csv"`, `"parquet"`, `"json"`, `"delta"` or `"iceberg"` (default: `"parquet"`)
 - `connection_name`: Name of the stored cloud storage connection
 - `scan_mode`: `"single_file"` or `"directory"`. Auto-detected from path if `None`
 - `delimiter`: CSV field separator (default: `;`). Only used for CSV
@@ -190,9 +190,55 @@ df = ff.read_from_cloud_storage(
 - `changes_since`: Read the table's change feed instead of its rows. Only used for Delta; see [Delta Lake Reading](#delta-lake-reading)
 - `include_change_preimage`: Keep the before-image rows of each update in the change feed (default: `False`). Only used for Delta
 - `description`: Optional description for the node
+- `catalog_uri`, `catalog_warehouse`, `catalog_token_secret`: The Iceberg REST catalog's address, its warehouse and the
+  name of a stored secret holding a bearer token. Only used for Iceberg; see
+  [An Iceberg table kept by a REST catalog](#an-iceberg-table-kept-by-a-rest-catalog)
+- `catalog`: The name of a catalog added to Flowfile's catalog, instead of the three above
 
 !!! tip "Recommended Approach"
     `read_from_cloud_storage()` is the recommended way to read from cloud storage. The format-specific `scan_*` functions below still work and are useful when you want a more concise call for a known format.
+
+### An Iceberg table kept by a REST catalog
+
+With `file_format="iceberg"`, `source` is the table's name (`namespace.table`) and `catalog_uri` the address of the
+Iceberg REST catalog that keeps it. No connection is named.
+
+```python
+import flowfile as ff
+
+orders = ff.read_from_cloud_storage(
+    "demo.orders",
+    file_format="iceberg",
+    catalog_uri="http://127.0.0.1:18181/catalog",
+    catalog_warehouse="proof",
+)
+orders.filter(ff.col("grp") == 3).collect()
+```
+
+A catalog added to Flowfile's catalog (see [A catalog from elsewhere](../../visual-editor/catalog/index.md#a-catalog-from-elsewhere))
+is named instead of its address, with `catalog="polaris"`; its address, warehouse and sign-in come from there, and
+the three `catalog_*` keywords are not given. This is also how a flow reads such a table on a multi-user server.
+
+Columns and filters are pushed into the Iceberg scan. What is supported, in plain words:
+
+- The table's files are on S3-compatible storage and its catalog hands out keys to them (vended credentials). Flowfile
+  holds no storage key of its own for the table: the catalog hands one to the process that reads or writes, each run
+  (Flowfile's core is also handed one when it asks the catalog for the table's columns, and keeps none).
+  The keys last as long as the catalog says (often an hour) and are not renewed during a run; a run with less than a
+  minute left on them is refused.
+- Iceberg version 2 and 3 tables are read; version 2 tables are written. Tables with equality deletes (rows deleted by
+  value, as Flink writes them) are refused with a sentence.
+- A write appends, or overwrites the table's rows, and creates a missing table in an existing namespace. There is no
+  merge, and a write never changes a table's columns or partitioning: the data's columns must be the table's, and it
+  is cast to the table's types.
+- A read of a table another engine deleted rows from can be slower: Polars' own reader cannot apply every delete file,
+  PyIceberg reads it instead, and the run's log says so.
+- A catalog that needs a sign-in takes a bearer token from a stored secret (`catalog_token_secret`, the secret's name;
+  the token is never saved with the flow), or a client id and secret when it is named by `catalog=`.
+- It runs from Python, and in a flow opened in the designer. The cloud storage nodes' forms do not offer Iceberg; a
+  table of a catalog added to Flowfile's catalog is read and written in the designer with Read from Catalog and Write
+  to Catalog, and from Python with `ff.read_catalog_table` and `ff.write_catalog_table`. A
+  multi-user server refuses a catalog named by its address and runs one named by `catalog=`.
 
 ### Format-Specific Cloud Readers
 

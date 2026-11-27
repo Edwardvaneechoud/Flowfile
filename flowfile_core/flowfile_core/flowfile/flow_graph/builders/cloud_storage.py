@@ -8,7 +8,7 @@ from flowfile_core.flowfile.catalog_cdc import (
     resolve_change_window,
 )
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.payloads import CloudWritePayload, op_payload
+from flowfile_core.flowfile.execution.payloads import CloudWritePayload, IcebergWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -20,6 +20,7 @@ from flowfile_core.flowfile.flow_graph.cloud import (
     _cloud_change_read_target,
     _cloud_change_scan_kwargs,
     _cloud_write_uses_delta_ops,
+    _iceberg_table_ref,
     _is_cloud_change_read,
     _resolve_cloud_node_connection,
     _worker_connection,
@@ -56,6 +57,25 @@ class CloudStorageBuildersMixin(GraphMixinBase):
             df.lazy = True
             write_settings = node_cloud_storage_writer.cloud_storage_settings
             user_id = node_cloud_storage_writer.user_id
+            if write_settings.file_format == "iceberg":
+                iceberg = IcebergWritePayload(
+                    plan=df.data_frame,
+                    table=_iceberg_table_ref(write_settings, user_id, writes=True),
+                    mode=write_settings.write_mode,
+                    flow_id=self.flow_id,
+                    node_id=node_cloud_storage_writer.node_id,
+                )
+                node.run_op(
+                    current_context(self).backend,
+                    OperationKind.iceberg_write,
+                    op_payload(iceberg),
+                    job_id=iceberg.job_id,
+                )
+                if write_settings.iceberg_catalog is not None and write_settings.iceberg_catalog.catalog is not None:
+                    from flowfile_core.catalog.services.external_catalogs import forget_schema_tables
+
+                    forget_schema_tables(write_settings.resource_path.split(".", 1)[0])
+                return df
             connection = _resolve_cloud_node_connection(write_settings, user_id, role="writer")
             if _cloud_write_uses_delta_ops(write_settings):
                 _write_cloud_delta(self, node, df, write_settings, connection, user_id)
@@ -163,6 +183,12 @@ class CloudStorageBuildersMixin(GraphMixinBase):
         def _func():
             if read_changes:
                 return _read_changes()
+            if cloud_storage_read_settings.file_format == "iceberg":
+                return FlowDataEngine.from_iceberg_table(
+                    _iceberg_table_ref(cloud_storage_read_settings, node_cloud_storage_reader.user_id),
+                    flow_id=self.flow_id,
+                    node_id=node_cloud_storage_reader.node_id,
+                )
             logger.info("Starting to run the schema callback for cloud storage reader")
             self.flow_logger.info("Starting to run the schema callback for cloud storage reader")
             settings = CloudStorageReadSettingsInternal(

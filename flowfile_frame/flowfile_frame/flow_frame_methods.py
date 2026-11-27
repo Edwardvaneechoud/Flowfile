@@ -1161,6 +1161,32 @@ def scan_delta(
     return source_frame(flow_graph, node_id)
 
 
+def _scan_iceberg_table(
+    table: str,
+    catalog: cloud_storage_schemas.IcebergCatalogSettings,
+    *,
+    flow_graph: FlowGraph | None = None,
+    description: str | None = None,
+    output_field_config: input_schema.OutputFieldConfig | None = None,
+) -> FlowFrame:
+    """A FlowFrame over an Iceberg table its REST catalog keeps (``ff.read_from_cloud_storage``'s Iceberg read)."""
+    node_id = generate_node_id()
+    if flow_graph is None:
+        flow_graph = _implicit_graph()
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=flow_graph.flow_id,
+        node_id=node_id,
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(
+            resource_path=table, file_format="iceberg", iceberg_catalog=catalog
+        ),
+        user_id=get_current_user_id(),
+        description=description,
+        output_field_config=output_field_config,
+    )
+    flow_graph.add_cloud_storage_reader(settings)
+    return source_frame(flow_graph, node_id)
+
+
 def scan_json_from_cloud_storage(
     source: str,
     *,

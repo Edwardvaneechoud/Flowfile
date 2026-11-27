@@ -1,4 +1,5 @@
 import type { NodePythonScript, PythonScriptInput } from "../../../../../types/node.types";
+import { newCellId } from "../../../../notebook/cellOperations";
 
 export const DEFAULT_PYTHON_SCRIPT_CODE = `import polars as pl
 
@@ -13,7 +14,7 @@ export const createPythonScriptNode = (flowId: number, nodeId: number): NodePyth
   const pythonScriptInput: PythonScriptInput = {
     code: DEFAULT_PYTHON_SCRIPT_CODE,
     kernel_id: null,
-    cells: [{ id: crypto.randomUUID(), code: DEFAULT_PYTHON_SCRIPT_CODE }],
+    cells: [{ id: newCellId(), code: DEFAULT_PYTHON_SCRIPT_CODE }],
   };
 
   return {

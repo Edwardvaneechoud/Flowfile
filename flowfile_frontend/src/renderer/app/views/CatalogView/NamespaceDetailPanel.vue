@@ -16,7 +16,7 @@
           {{ HUB_MANAGED_NOTE }}
         </p>
       </div>
-      <div v-if="!isHub && manages" class="header-actions">
+      <div v-if="!isHub && !external && manages" class="header-actions">
         <button
           class="btn btn-danger btn-sm"
           data-testid="catalog-delete"
@@ -30,7 +30,93 @@
       </div>
     </div>
 
-    <div class="section-header">
+    <template v-if="external">
+      <div class="section-header">
+        <h3 class="section-title">Kept elsewhere</h3>
+        <div class="header-actions">
+          <button
+            v-if="canChangeStorage(namespace)"
+            class="btn btn-secondary btn-sm"
+            data-testid="external-panel-test"
+            :disabled="testing"
+            @click="testStored"
+          >
+            <i :class="testing ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-plug'"></i>
+            Test
+          </button>
+          <button
+            class="btn btn-secondary btn-sm"
+            data-testid="external-panel-refresh"
+            :disabled="refreshing"
+            @click="refresh(true)"
+          >
+            <i :class="refreshing ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-rotate'"></i>
+            Refresh
+          </button>
+          <button
+            v-if="canChangeStorage(namespace)"
+            class="btn btn-secondary btn-sm"
+            data-testid="external-panel-edit"
+            @click="showExternalEditor = true"
+          >
+            <i class="fa-solid fa-pen"></i>
+            Edit
+          </button>
+          <button
+            v-if="canChangeStorage(namespace)"
+            class="btn btn-danger btn-sm"
+            data-testid="external-panel-remove"
+            :disabled="deleting"
+            @click="removeExternal"
+          >
+            <i class="fa-solid fa-link-slash"></i>
+            Remove from Flowfile
+          </button>
+        </div>
+      </div>
+      <div class="meta-grid" data-testid="external-panel">
+        <div class="meta-card">
+          <span class="meta-label">Address</span>
+          <span class="meta-value mono">{{ external.uri }}</span>
+        </div>
+        <div class="meta-card">
+          <span class="meta-label">Warehouse</span>
+          <span class="meta-value">{{ external.warehouse || "--" }}</span>
+        </div>
+        <div class="meta-card">
+          <span class="meta-label">Sign-in</span>
+          <span class="meta-value">
+            {{ signInLabel(external.sign_in) }}
+            <template v-if="external.client_id"> ({{ external.client_id }})</template>
+          </span>
+        </div>
+        <div class="meta-card">
+          <span class="meta-label">Brought in line</span>
+          <span class="meta-value">{{ syncedLine(external) }}</span>
+        </div>
+      </div>
+      <p v-if="notShown" class="storage-hint muted">{{ notShown }}</p>
+      <p v-if="external.sync_error" class="storage-hint error" data-testid="external-sync-error">
+        {{ external.sync_error }} The schemas known before are kept.
+      </p>
+      <p
+        v-if="testResult"
+        class="storage-hint"
+        :class="testResult.ok ? 'ok' : 'error'"
+        data-testid="external-panel-test-result"
+      >
+        {{ testResult.message }}
+      </p>
+      <p class="storage-hint">{{ NO_KEY_TYPED }}</p>
+      <ExternalCatalogModal
+        :visible="showExternalEditor"
+        :catalog="namespace"
+        @close="showExternalEditor = false"
+        @saved="onExternalSaved"
+      />
+    </template>
+
+    <div v-if="!external" class="section-header">
       <h3 class="section-title">Storage</h3>
       <button
         v-if="!isHub && changesStorage"
@@ -45,7 +131,7 @@
       </button>
     </div>
 
-    <div class="meta-grid">
+    <div v-if="!external" class="meta-grid">
       <div class="meta-card">
         <span class="meta-label">Backend</span>
         <span class="meta-value">
@@ -88,7 +174,7 @@
       </template>
     </div>
 
-    <template v-if="!isHub">
+    <template v-if="!isHub && !external">
       <p v-if="!isCloud" class="storage-hint">
         Tables in this catalog are stored on the local filesystem under Flowfile's managed catalog
         directory.
@@ -129,6 +215,16 @@ import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import EditCatalogStorageModal from "./EditCatalogStorageModal.vue";
 import CatalogSemanticSection from "./semantic/CatalogSemanticSection.vue";
 import { HUB_MANAGED_NOTE, isHubRow, unavailableReason } from "./hubRows";
+import ExternalCatalogModal from "./ExternalCatalogModal.vue";
+import {
+  NO_KEY_TYPED,
+  answerStillShown,
+  catalogAfterSave,
+  notShownNote,
+  signInLabel,
+  syncedLine,
+} from "./externalCatalog";
+import type { ExternalCatalogTestResult } from "../../types";
 import { forgetCatalogSelection } from "./catalogLastLocation";
 import { deleteBlockedReason, storageLockedReason } from "./catalogStorageEdit";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
@@ -168,6 +264,108 @@ const loadingConnection = ref(false);
 const showStorageEditor = ref(false);
 const deleting = ref(false);
 
+const external = computed(() => props.namespace.external ?? null);
+const notShown = computed(() => notShownNote(external.value?.not_shown ?? 0));
+const showExternalEditor = ref(false);
+const testing = ref(false);
+const refreshing = ref(false);
+const testResult = ref<ExternalCatalogTestResult | null>(null);
+
+/** Whether the panel still shows the catalog an answer was asked for. */
+const stillShown = (id: number) =>
+  answerStillShown(id, catalogStore.selectedNamespaceId, props.namespace.id);
+
+async function refresh(force: boolean) {
+  if (!external.value) return;
+  const id = props.namespace.id;
+  refreshing.value = force;
+  try {
+    await catalogStore.syncExternalCatalog(id, force);
+    if (stillShown(id)) catalogStore.selectedNamespace = catalogStore.findNamespaceInTree(id);
+  } finally {
+    if (stillShown(id)) refreshing.value = false;
+  }
+}
+
+async function testStored() {
+  const info = external.value;
+  if (!info) return;
+  const id = props.namespace.id;
+  testing.value = true;
+  let result: ExternalCatalogTestResult;
+  try {
+    result = await CatalogApi.testExternalCatalog({
+      uri: info.uri,
+      warehouse: info.warehouse,
+      sign_in: info.sign_in,
+      client_id: info.client_id,
+      scope: info.scope,
+      token_endpoint: info.token_endpoint,
+      namespace_id: id,
+    });
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail;
+    result = {
+      ok: false,
+      message: typeof detail === "string" ? detail : "The test could not be run.",
+      schemas: null,
+    };
+  }
+  if (!stillShown(id)) return;
+  testResult.value = result;
+  testing.value = false;
+}
+
+/** After Edit then Save: the panel, and so the next edit, hold what was saved. */
+function onExternalSaved(saved: NamespaceTree) {
+  if (!stillShown(saved.id)) return;
+  catalogStore.selectedNamespace = catalogAfterSave(
+    catalogStore.findNamespaceInTree(saved.id),
+    props.namespace,
+    saved,
+  );
+  testResult.value = null;
+}
+
+async function removeExternal() {
+  const catalog = props.namespace;
+  try {
+    await ElMessageBox.confirm(
+      `Remove "${catalog.name}" from Flowfile? Its schemas and the stored sign-in go from Flowfile; the other ` +
+        "catalog and its tables are not touched.",
+      "Remove from Flowfile",
+      { confirmButtonText: "Remove", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  deleting.value = true;
+  try {
+    await CatalogApi.deleteExternalCatalog(catalog.id);
+    forgetCatalogSelection("namespaceId", catalog.id);
+    ElMessage.success(`Removed ${catalog.name} from Flowfile`);
+    if (stillShown(catalog.id)) {
+      catalogStore.clearNamespaceSelection();
+      emit("close");
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Could not remove the catalog");
+  } finally {
+    await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
+    deleting.value = false;
+  }
+}
+
+watch(
+  () => props.namespace.id,
+  () => {
+    testResult.value = null;
+    testing.value = false;
+    void refresh(false);
+  },
+  { immediate: true },
+);
+
 const storageLocked = computed(() => storageLockedReason(props.namespace));
 const deleteBlocked = computed(() => deleteBlockedReason(props.namespace));
 
@@ -192,9 +390,11 @@ async function deleteCatalog() {
     for (const schema of catalog.children) await CatalogApi.deleteNamespace(schema.id);
     await CatalogApi.deleteNamespace(catalog.id);
     forgetCatalogSelection("namespaceId", catalog.id);
-    catalogStore.clearNamespaceSelection();
     ElMessage.success(`Deleted ${catalog.name}`);
-    emit("close");
+    if (stillShown(catalog.id)) {
+      catalogStore.clearNamespaceSelection();
+      emit("close");
+    }
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Could not delete the catalog");
   } finally {
@@ -233,18 +433,23 @@ const location = computed<{ label: string; value: string } | null>(() => {
 
 async function loadConnection() {
   connection.value = null;
+  loadingConnection.value = false;
+  const id = props.namespace.id;
   const name = props.namespace.storage_connection_name;
   // A hub catalog's connection is the hub's; this desktop's connections never hold it.
   if (isHub.value || !isCloud.value || !name) return;
+  const asked = () => stillShown(id) && props.namespace.storage_connection_name === name;
   loadingConnection.value = true;
+  let found: FullCloudStorageConnectionInterface | null = null;
   try {
     const all = await fetchCloudStorageConnectionsInterfaces();
-    connection.value = all.find((c) => c.connectionName === name) ?? null;
+    found = all.find((c) => c.connectionName === name) ?? null;
   } catch {
-    connection.value = null;
-  } finally {
-    loadingConnection.value = false;
+    found = null;
   }
+  if (!asked()) return;
+  connection.value = found;
+  loadingConnection.value = false;
 }
 
 watch(() => [props.namespace.id, props.namespace.storage_connection_name], loadConnection);
@@ -321,5 +526,13 @@ onMounted(loadConnection);
 
 .storage-hint.muted {
   color: var(--color-text-muted);
+}
+
+.storage-hint.error {
+  color: var(--el-color-danger, #f56c6c);
+}
+
+.storage-hint.ok {
+  color: var(--el-color-success, #67c23a);
 }
 </style>

@@ -1,7 +1,7 @@
 <template>
-  <div class="file-browser" :class="{ dense }">
+  <div class="file-browser" :class="{ dense, page }">
     <!-- Title Section -->
-    <div class="browser-header">
+    <div v-if="!page" class="browser-header">
       <div class="browser-title">
         <span class="material-icons">folder</span>
         <span>File Browser</span>
@@ -10,6 +10,20 @@
     <div class="browser-content">
       <!-- Navigation and Search Section -->
       <div class="browser-toolbar">
+        <div v-if="browseRoots.length" class="browse-roots">
+          <button
+            v-for="root in browseRoots"
+            :key="root.path"
+            class="nav-button root-button"
+            :class="{ active: activeRoot?.path === root.path }"
+            :disabled="loading"
+            :data-testid="`file-browser-root-${root.name.toLowerCase()}`"
+            @click="navigateToPath(root.path)"
+          >
+            <span class="material-icons">{{ rootIcon(root.name) }}</span>
+            <span>{{ root.name }}</span>
+          </button>
+        </div>
         <div class="path-navigation">
           <button class="nav-button" :disabled="loading || isAtRoot" @click="navigateUpDirectory">
             <span class="material-icons">arrow_upward</span>
@@ -78,7 +92,15 @@
         </div>
       </div>
       <!-- Main Content Area -->
-      <div class="browser-main" @click="handleBackgroundClick">
+      <div
+        class="browser-main"
+        :class="{ 'drop-active': dropActive }"
+        data-testid="file-browser-main"
+        @click="handleBackgroundClick"
+        @dragover="onFilesDragOver"
+        @dragleave="dropActive = false"
+        @drop="onFilesDrop"
+      >
         <!-- Loading State -->
         <div v-if="loading" class="loading-state"></div>
 
@@ -125,7 +147,10 @@
             :class="{
               selected: selectedFile?.path === file.path,
               'is-directory': file.is_directory,
+              unpickable: !canPick(file),
             }"
+            :title="canPick(file) ? undefined : unpickableNote"
+            :data-testid="canPick(file) ? undefined : 'file-browser-unpickable'"
             @click.stop="handleSingleClick(file)"
             @dblclick.stop="handleDoubleClick(file)"
           >
@@ -186,9 +211,62 @@
       </div>
       <!-- Bottom Action Bar -->
       <div class="browser-actions">
+        <template v-if="canTransferFiles">
+          <input
+            ref="uploadInput"
+            type="file"
+            multiple
+            class="upload-input"
+            data-testid="file-browser-upload-input"
+            @change="onUploadPicked"
+          />
+          <el-button
+            size="small"
+            class="browser-action-btn"
+            :disabled="loading || !!error"
+            data-testid="file-browser-upload"
+            @click="uploadInput?.click()"
+          >
+            <span class="material-icons">upload</span>
+            Upload
+          </el-button>
+          <el-button
+            v-if="selectedFile && !selectedFile.is_directory"
+            size="small"
+            class="browser-action-btn"
+            data-testid="file-browser-download"
+            @click="downloadSelected"
+          >
+            <span class="material-icons">download</span>
+            Download
+          </el-button>
+          <el-button
+            v-if="selectedFile"
+            size="small"
+            class="browser-action-btn"
+            :disabled="loading"
+            data-testid="file-browser-delete"
+            @click="deleteSelected"
+          >
+            <span class="material-icons">delete</span>
+            Delete
+          </el-button>
+        </template>
+        <span
+          v-if="selectedFile && !canPick(selectedFile)"
+          class="unpickable-note"
+          data-testid="file-browser-unpickable-note"
+        >
+          {{ unpickableNote }}
+        </span>
         <template v-if="mode === 'create' && provider.capabilities.createFile">
           <el-button
-            v-if="selectedFile && !selectedFile.is_directory && showWarningOnOverwrite"
+            v-if="
+              selectedFile &&
+              !selectedFile.is_directory &&
+              canPick(selectedFile) &&
+              showWarningOnOverwrite
+            "
             type="warning"
             :disabled="loading"
             size="small"
@@ -226,15 +304,16 @@
         </el-button>
 
         <el-button
-          v-if="mode === 'open' && selectedFile && !selectedFile.is_directory"
+          v-if="mode === 'open' && selectedFile && opensFile(selectedFile)"
           type="primary"
-          :disabled="loading"
+          :disabled="loading || !canPick(selectedFile)"
           size="small"
           class="browser-action-btn"
+          data-testid="file-browser-open"
           @click="handleOpenFile"
         >
           <span class="material-icons">open_in_new</span>
-          Open File
+          {{ page ? "Open in designer" : "Open File" }}
         </el-button>
       </div>
     </div>
@@ -289,6 +368,19 @@ import { resolveStorageProvider, storageScopeKey } from "./storage";
 import { basename, dirname, normalizePath } from "../../../utils/storagePath";
 
 import { FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "./constants";
+import { FileApi } from "./fileSystemApi";
+import { FileManagerApi } from "../../../api/fileManager.api";
+import {
+  deleteQuestion,
+  isBrowseRoot,
+  listsFile,
+  matchesFileTypes,
+  offersBrowseRoots,
+  pickableTypesNote,
+  rootContaining,
+  takenNameQuestion,
+  type BrowseRoot,
+} from "./workspaceRoots";
 
 const fileBrowserStore = useFileBrowserStore();
 
@@ -321,6 +413,8 @@ interface Props {
   dense?: boolean;
   /** Which storage to browse. Omit for the local filesystem. */
   location?: StorageLocation;
+  /** A page of its own (the Workspace page): fills its host, makes folders and opens flow files only. */
+  page?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -336,6 +430,7 @@ const props = withDefaults(defineProps<Props>(), {
   defaultNewFileName: "",
   dense: false,
   location: () => ({ kind: "local" }) as StorageLocation,
+  page: false,
 });
 
 const provider = computed(() => resolveStorageProvider(props.location));
@@ -396,12 +491,152 @@ const isWithinRoot = (p: string): boolean => {
   return target === root || target.startsWith(root + "/");
 };
 
+// A server's Workspace and Shared folders (and flow folders kept apart); empty on a desktop.
+const browseRoots = ref<BrowseRoot[]>([]);
+const activeRoot = computed(() => rootContaining(currentPath.value, browseRoots.value));
+const rootIcon = (name: string): string =>
+  name === "Workspace" ? "person" : name === "Shared" ? "groups" : "folder";
+const canTransferFiles = computed(
+  () => props.location.kind === "local" && browseRoots.value.length > 0,
+);
+/** On a server every file of a folder is listed; one the dialog's types leave out is shown but not chosen. */
+const listsEveryFile = computed(() => browseRoots.value.length > 0);
+const canPick = (file: FileInfo): boolean =>
+  file.is_directory || matchesFileTypes(file.name, props.allowedFileTypes);
+const unpickableNote = computed(() => pickableTypesNote(props.allowedFileTypes));
+const loadBrowseRoots = async () => {
+  if (!offersBrowseRoots(props.location.kind, props.rootPath)) return;
+  try {
+    browseRoots.value = await FileApi.getBrowseRoots();
+  } catch {
+    browseRoots.value = [];
+  }
+};
+
 const isAtRoot = computed(
   () =>
     (!!props.rootPath &&
       normalizeForCompare(currentPath.value) === normalizeForCompare(props.rootPath)) ||
-    provider.value.isRoot(currentPath.value),
+    provider.value.isRoot(currentPath.value) ||
+    isBrowseRoot(currentPath.value, browseRoots.value),
 );
+
+const uploadInput = ref<HTMLInputElement | null>(null);
+const dropActive = ref(false);
+
+type TakenNameChoice = { replace: true } | { unique: true };
+
+/** Replace the file that has the name, or keep both; null when the question is closed. */
+const askAboutTakenName = async (name: string): Promise<TakenNameChoice | null> => {
+  try {
+    await ElMessageBox.confirm(takenNameQuestion(name), "Upload", {
+      confirmButtonText: "Replace",
+      cancelButtonText: "Keep both",
+      distinguishCancelAndClose: true,
+      type: "warning",
+    });
+    return { replace: true };
+  } catch (action) {
+    return action === "cancel" ? { unique: true } : null;
+  }
+};
+
+/** Upload one file into `folder`, asking first when its name is taken; false when the person left it out. */
+const uploadInto = async (folder: string, file: File): Promise<boolean> => {
+  const send = (choice?: TakenNameChoice) =>
+    FileManagerApi.uploadFile(file, undefined, { directory: folder, ...choice });
+  const listed =
+    currentPath.value === folder &&
+    files.value.some((entry) => !entry.is_directory && entry.name === file.name);
+  if (!listed) {
+    try {
+      await send();
+      return true;
+    } catch (err: any) {
+      if (err?.response?.status !== 409) throw err;
+    }
+  }
+  const choice = await askAboutTakenName(file.name);
+  if (!choice) return false;
+  await send(choice);
+  return true;
+};
+
+const uploadFiles = async (picked: File[]) => {
+  if (!picked.length) return;
+  const folder = currentPath.value;
+  let uploaded = 0;
+  for (const file of picked) {
+    try {
+      if (await uploadInto(folder, file)) uploaded += 1;
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      ElMessage.error(
+        `${file.name}: ${typeof detail === "string" ? detail : "could not be uploaded"}`,
+      );
+    }
+  }
+  if (uploaded) ElMessage.success(`Uploaded ${uploaded} file${uploaded === 1 ? "" : "s"}`);
+  if (currentPath.value === folder) await loadDirectoryContents(folder);
+};
+
+const onUploadPicked = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const picked = Array.from(input.files ?? []);
+  input.value = "";
+  await uploadFiles(picked);
+};
+
+const onFilesDragOver = (event: DragEvent) => {
+  if (!canTransferFiles.value || !event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  dropActive.value = true;
+};
+
+const onFilesDrop = async (event: DragEvent) => {
+  if (!canTransferFiles.value || !event.dataTransfer?.files.length) return;
+  event.preventDefault();
+  dropActive.value = false;
+  await uploadFiles(Array.from(event.dataTransfer.files));
+};
+
+const downloadSelected = async () => {
+  const file = selectedFile.value;
+  if (!file || file.is_directory) return;
+  try {
+    await FileApi.downloadFile(file.path, file.name);
+  } catch (err: any) {
+    ElMessage.error(err?.message || "Could not download the file");
+  }
+};
+
+const deleteSelected = async () => {
+  const file = selectedFile.value;
+  if (!file) return;
+  try {
+    const items = file.is_directory
+      ? (await FileApi.deletePath(file.path, { dryRun: true })).items
+      : 0;
+    await ElMessageBox.confirm(deleteQuestion(file.name, file.is_directory, items), "Delete", {
+      confirmButtonText: "Delete",
+      cancelButtonText: "Cancel",
+      type: "warning",
+    });
+  } catch (err: any) {
+    if (typeof err?.message === "string") ElMessage.error(err.message);
+    return;
+  }
+  try {
+    await FileApi.deletePath(file.path);
+  } catch (err: any) {
+    ElMessage.error(typeof err?.message === "string" ? err.message : "Could not delete it");
+    return;
+  }
+  ElMessage.success(`Deleted "${file.name}"`);
+  selectedFile.value = null;
+  emit("update:modelValue", null);
+  await loadDirectoryContents(currentPath.value);
+};
 
 const loadDirectoryContents = async (directoryPath: string) => {
   loading.value = true;
@@ -601,14 +836,18 @@ const handleBackgroundClick = () => {
   emit("update:modelValue", null);
 };
 
+/** Whether a file is opened from here: any file a dialog may pick, and on the page a flow file only. */
+const opensFile = (file: FileInfo): boolean =>
+  !file.is_directory && canPick(file) && (!props.page || isFlowfile(file));
+
 const handleOpenFile = () => {
-  if (selectedFile.value && !selectedFile.value.is_directory) {
+  if (selectedFile.value && opensFile(selectedFile.value)) {
     emit("fileSelected", selectedFile.value);
   }
 };
 
 const handleSingleClick = (file: FileInfo) => {
-  emit("update:modelValue", file);
+  emit("update:modelValue", canPick(file) ? file : null);
   selectedFile.value = file;
 };
 
@@ -619,7 +858,8 @@ const handleSelectDirectory = () => {
 /** Offered where a location is being picked: a save target or a directory. */
 const canCreateFolder = computed(
   () =>
-    !!provider.value.createDirectory && (props.mode === "create" || props.allowDirectorySelection),
+    !!provider.value.createDirectory &&
+    (props.mode === "create" || props.allowDirectorySelection || props.page),
 );
 
 const createFolder = async () => {
@@ -648,7 +888,7 @@ const handleDoubleClick = async (file: FileInfo) => {
   if (file.is_directory) {
     selectedFile.value = null;
     await navigateIntoDirectory(file.name);
-  } else {
+  } else if (opensFile(file)) {
     emit("fileSelected", file);
   }
 };
@@ -703,7 +943,7 @@ const handleCreateFile = () => {
 };
 
 const confirmOverwrite = () => {
-  if (selectedFile.value && !selectedFile.value.is_directory) {
+  if (selectedFile.value && !selectedFile.value.is_directory && canPick(selectedFile.value)) {
     ElMessageBox.confirm(
       `Are you sure you want to overwrite "${selectedFile.value.name}"?`,
       "Warning",
@@ -760,11 +1000,7 @@ const calculateSortedFiles = () => {
 
       const matchesSearch = file.name.toLowerCase().includes(searchTerm.value.toLowerCase());
       const matchesHidden = showHidden.value || !file.is_hidden;
-      const matchesType =
-        props.allowedFileTypes.length === 0 ||
-        props.allowedFileTypes.some((type) =>
-          file.name.toLowerCase().endsWith(`.${type.toLowerCase()}`),
-        );
+      const matchesType = listsFile(file.name, props.allowedFileTypes, listsEveryFile.value);
       return matchesSearch && matchesHidden && matchesType;
     })
     .sort((a, b) => {
@@ -834,6 +1070,7 @@ onActivated(async () => {
 });
 
 onMounted(async () => {
+  void loadBrowseRoots();
   if (props.initialFilePath) {
     await handleInitialFileSelection();
   } else {
@@ -843,6 +1080,26 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.browse-roots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.root-button.active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.upload-input {
+  display: none;
+}
+
+.browser-main.drop-active {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: -4px;
+}
+
 .browser-title {
   display: flex;
   align-items: center;
@@ -1145,6 +1402,20 @@ onMounted(async () => {
 
 .hidden-file {
   opacity: 0.5;
+}
+
+.file-item.unpickable {
+  opacity: 0.6;
+}
+
+.unpickable-note {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.file-browser.page {
+  height: 100%;
 }
 
 .file-browser {

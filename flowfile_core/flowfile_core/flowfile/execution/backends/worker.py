@@ -65,6 +65,7 @@ from flowfile_core.flowfile.execution.payloads import (
     FileWritePayload,
     FuzzyJoinPayload,
     GoogleAnalyticsReadPayload,
+    IcebergWritePayload,
     KafkaReadPayload,
     MlApplyPayload,
     MlTrainPayload,
@@ -330,6 +331,7 @@ class WorkerBackend(_WorkerReferences):
             OperationKind.sql_query: self._sql_query,
             OperationKind.database_write: self._database_write,
             OperationKind.cloud_write: self._cloud_write,
+            OperationKind.iceberg_write: self._iceberg_write,
             OperationKind.file_write: self._file_write,
             **{kind: partial(self._delta, kind) for kind in _DELTA_OPS},
             OperationKind.viz_session: self._viz_session,
@@ -467,9 +469,10 @@ class WorkerBackend(_WorkerReferences):
         gets a write's cloud connection with its transport options only (``_transport_only``).
         ``cancel(JobHandle(self.id, job_id))`` with the payload's ``job_id`` reaches the job while the call waits.
 
-        With the protocol flag on, the kinds in ``V1_OPS`` go to ``POST /v1/ops/{kind}``, and ``polars_code``
-        and ``sql_query`` do in either flag state. Their refs are keyed as on the task routes, each output a ``/v1``
-        result ``<job_id>_<i>`` of its own. The Delta writes and ``viz_session`` always use the task routes.
+        With the protocol flag on, the kinds in ``V1_OPS`` go to ``POST /v1/ops/{kind}``, and ``polars_code``,
+        ``sql_query`` and ``iceberg_write`` do in either flag state. Their refs are keyed as on the task routes, each
+        output a ``/v1`` result ``<job_id>_<i>`` of its own. The Delta writes and ``viz_session`` always use the task
+        routes.
 
         Per kind, its payload and what differs from refs ``{"result": ref}`` and empty ``metadata``:
 
@@ -495,6 +498,7 @@ class WorkerBackend(_WorkerReferences):
         - ``file_write``: ``FileWritePayload``; no refs.
         - ``database_write``: ``DatabaseWritePayload``; no refs.
         - ``cloud_write``: ``CloudWritePayload``; no refs.
+        - ``iceberg_write``: ``IcebergWritePayload``; no refs. The worker asks the table's catalog for its keys.
         - ``delta_write``: ``DeltaWritePayload``; no refs, ``metadata`` the worker's report (keys in the ``payloads``
           module docstring).
         - ``delta_merge``: ``DeltaMergePayload``; as ``delta_write``.
@@ -1298,6 +1302,10 @@ class WorkerBackend(_WorkerReferences):
         """Run the code over ``POST /v1/ops/polars_code`` whatever the flag says, as no task route runs it."""
         return self._v1_op(OperationKind.polars_code, payload)
 
+    def _iceberg_write(self, payload: OpPayload) -> OpResult:
+        """Send the write to ``POST /v1/ops/iceberg_write`` whatever the flag says, as no task route runs it."""
+        return self._v1_op(OperationKind.iceberg_write, payload)
+
     def _sql_query(self, payload: OpPayload) -> OpResult:
         """Send the statement to ``POST /v1/ops/sql_query`` whatever the flag says, as no task route runs it."""
         return self._v1_op(OperationKind.sql_query, payload)
@@ -2060,6 +2068,19 @@ def _sql_query_body(job: SqlQueryPayload) -> dict[str, Any]:
     }
 
 
+def _iceberg_write_body(job: IcebergWritePayload) -> dict[str, Any]:
+    return {
+        "operation": job.plan.serialize(),
+        "catalog_uri": job.table.catalog_uri,
+        "table": job.table.table,
+        "warehouse": job.table.warehouse,
+        "token": job.table.token,
+        "mode": job.mode,
+        "flowfile_flow_id": job.flow_id,
+        "flowfile_node_id": job.node_id,
+    }
+
+
 def _file_write_body(job: FileWritePayload) -> dict[str, Any]:
     settings = job.settings
     return {
@@ -2124,4 +2145,5 @@ V1_OPS: dict[OperationKind, V1Op] = {
         DatabaseWritePayload, lambda job: json.loads(_database_write_settings(job).model_dump_json())
     ),
     OperationKind.cloud_write: V1Op(CloudWritePayload, _cloud_write_body),
+    OperationKind.iceberg_write: V1Op(IcebergWritePayload, _iceberg_write_body),
 }

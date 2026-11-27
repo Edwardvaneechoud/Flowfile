@@ -103,11 +103,12 @@ OPERATIONS = frozenset(
         "viz_session",
         "polars_code",
         "sql_query",
+        "iceberg_write",
     }
 )
 """The operation kinds this worker runs, by ``OperationKind`` value; list a kind only while a route runs it.
 
-Fifteen are the ``POST /v1/ops/<kind>`` routes, whose bodies are here. The Delta write, merge and SCD2 write and the
+Sixteen are the ``POST /v1/ops/<kind>`` routes, whose bodies are here. The Delta write, merge and SCD2 write and the
 visualisation sessions are served by the task routes in ``routes.py``.
 """
 
@@ -204,6 +205,20 @@ class SqlQueryInput(WireModel):
     inputs: list[models.Base64Bytes]
     flowfile_flow_id: int
     flowfile_node_id: int | str = -1
+
+
+class IcebergWriteInput(models.PolarsOperation):
+    """The body of an Iceberg write: the rows as ``operation``, the table as a flow names it, and the mode.
+
+    No storage key: the child asks the table's catalog for its keys. ``token`` is at most the ``$ffsec$`` ciphertext
+    of a bearer token for the catalog. An unknown field is refused rather than dropped.
+    """
+
+    catalog_uri: str
+    table: str
+    warehouse: str | None = None
+    token: str | None = None
+    mode: Literal["append", "overwrite"]
 
 
 class CredentialRefBody(WireModel):
@@ -1095,6 +1110,18 @@ def cloud_write(body: models.CloudStorageScriptWrite, job_id: str) -> OpOutputs:
     kwargs = {"cloud_write_settings": body.get_cloud_storage_write_settings()}
     plan = body.polars_serializable_object()
     return _write(job_id, plan, "write_to_cloud_storage", "", body.flowfile_flow_id, body.flowfile_node_id, kwargs)
+
+
+@_claimed
+def iceberg_write(body: IcebergWriteInput, job_id: str) -> OpOutputs:
+    """Write the body's plan to its Iceberg table in a child as job *job_id*; nothing is held.
+
+    The child asks the table's catalog for the keys to its files, so none travels in the body.
+    """
+    table = {"catalog_uri": body.catalog_uri, "table": body.table, "warehouse": body.warehouse, "token": body.token}
+    plan = body.polars_serializable_object()
+    kwargs = {"table": table, "mode": body.mode}
+    return _write(job_id, plan, "write_iceberg", "", body.flowfile_flow_id, body.flowfile_node_id, kwargs)
 
 
 @_claimed

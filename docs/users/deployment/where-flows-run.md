@@ -105,7 +105,7 @@ The common reasons:
 
 | Reason | Cause and fix |
 |---|---|
-| `it reads local files` (or `writes`) | A local path, or a file uploaded through the File Manager, on a worker that does not see core's files. Use object storage or a URL, or a worker marked **Sees this server's files**. |
+| `it reads local files` (or `writes`) | A local path, or a file uploaded through the Workspace page, on a worker that does not see core's files. Use object storage or a URL, or a worker marked **Sees this server's files**. |
 | `namespace "<name>" is on local disk, not object storage` | A catalog whose tables live on core's disk, on a worker on another host. |
 | `it runs on a kernel, which reads its inputs from core's disk` | A **Python Script** node, a custom node that runs on a kernel, or on a multi-user server a **Polars code** node, on a worker on another host. |
 | `it needs <plugin> (not installed)`, `(version <x>, core has <y>)` or `(fails to load)` | The worker lacks a plugin the node uses, has another version, or cannot load it. The Backends page shows the details. |

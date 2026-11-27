@@ -2,15 +2,24 @@
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Literal, NamedTuple
 
 import polars as pl
 
 from flowfile_core.auth import sharing
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.delta_utils import is_delta_table
+from flowfile_core.catalog.exceptions import KeptElsewhereError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services.external_catalogs import (
+    ensure_table_row,
+    outside_reader_table,
+    outside_table,
+    refuse_kept_elsewhere,
+    table_ref_for_run,
+)
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.catalog.text_utils import is_table_reference
 from flowfile_core.configs import logger
@@ -105,6 +114,10 @@ def _authorize_catalog_write(db, user_id: int | None, *, existing, namespace_id:
     ``_require_namespace_writable`` (the write then lands in the seeded public
     default namespace).
     """
+    try:
+        refuse_kept_elsewhere(db, namespace_id)
+    except KeptElsewhereError as exc:
+        raise PermissionError(str(exc)) from None
     if user_id is None or not sharing.sharing_enabled():
         return
     user = db.get(db_models.User, user_id)
@@ -205,6 +218,8 @@ class CatalogTableInfo(NamedTuple):
     materialized: dict[str, str] | None = None
     cdc_enabled: bool = False
     cdc_enabled_version: int | None = None
+    # ``catalog.schema.table`` when the table is kept by another catalog; its columns are that catalog's to say.
+    kept_elsewhere: str | None = None
 
 
 _CDF_COLUMN_DTYPES = (
@@ -234,6 +249,35 @@ def _scd2_config_is_stale(cfg: dict, raw_schema: str | None) -> bool:
     return scd2_system_columns_missing(cfg, columns)
 
 
+_MATERIALIZE_FAILED = re.compile(r"Materializing catalog view '.*' failed: (?P<body>\{.*\})", re.DOTALL)
+
+
+def _core_refusal(exc: Exception) -> str | None:
+    """The sentence core refused a catalog page cell's lookup with, else ``None``.
+
+    The kernel runtime asks core's ``GET /catalog/tables/resolve`` and raises a refusal as an HTTP status error
+    carrying the response; core refuses a table kept elsewhere with a 422 whose ``detail`` is one sentence (a mistyped
+    table, a schema not yet in Flowfile's catalog, no Use). A refused ``POST .../materialize`` (what the worker was
+    refused while writing the snapshot) the runtime raises as ``RuntimeError("Materializing catalog view '<name>'
+    failed: <core's answer>")``, whose string ``detail`` is the sentence. Any other error is left as it is.
+    """
+    if isinstance(exc, RuntimeError) and getattr(exc, "response", None) is None:
+        matched = _MATERIALIZE_FAILED.fullmatch(str(exc))
+        try:
+            detail = json.loads(matched["body"]).get("detail") if matched else None
+        except (ValueError, AttributeError):
+            return None
+        return detail if isinstance(detail, str) else None
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) != 422:
+        return None
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        return None
+    return detail if isinstance(detail, str) else None
+
+
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
     """Resolve a single catalog table (physical or virtual) for a table reader node.
 
@@ -242,18 +286,21 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     """
     remote = metadata_lookup.get()
     if remote is not None:
-        info = CatalogTableInfo(
-            **remote(
-                "catalog_table",
-                {
-                    "node_id": node_catalog_reader.node_id,
-                    "catalog_table_id": node_catalog_reader.catalog_table_id,
-                    "catalog_full_table_name": node_catalog_reader.catalog_full_table_name,
-                    "catalog_table_name": node_catalog_reader.catalog_table_name,
-                    "catalog_namespace_id": node_catalog_reader.catalog_namespace_id,
-                },
-            )
-        )
+        args = {
+            "node_id": node_catalog_reader.node_id,
+            "catalog_table_id": node_catalog_reader.catalog_table_id,
+            "catalog_full_table_name": node_catalog_reader.catalog_full_table_name,
+            "catalog_table_name": node_catalog_reader.catalog_table_name,
+            "catalog_namespace_id": node_catalog_reader.catalog_namespace_id,
+        }
+        try:
+            answer = remote("catalog_table", args)
+        except Exception as exc:
+            sentence = _core_refusal(exc)
+            if sentence is None:
+                raise
+            raise ValueError(sentence) from None
+        info = CatalogTableInfo(**answer)
         if info.scd2_config and _scd2_config_is_stale(info.scd2_config, info.schema_json):
             return info._replace(scd2_config=None)
         return info
@@ -275,6 +322,10 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
             svc = CatalogService(repo)
 
             table_record = None
+            if not node_catalog_reader.catalog_table_id:
+                outside = outside_reader_table(db, node_catalog_reader)
+                if outside is not None:
+                    return _outside_table_info(db, node_catalog_reader.user_id, outside)
             if node_catalog_reader.catalog_table_id:
                 table_record = repo.get_table(node_catalog_reader.catalog_table_id)
             else:
@@ -353,6 +404,70 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
         cdc_enabled=cdc_enabled,
         cdc_enabled_version=cdc_enabled_version,
     )
+
+
+def _outside_table_info(db, user_id: int | None, outside) -> CatalogTableInfo:
+    """A reader's resolution of a table kept elsewhere: its reference, and whether ``user_id`` has Use on its schema."""
+    return CatalogTableInfo(
+        file_path=None,
+        table_type="physical",
+        producer_fingerprint=None,
+        is_optimized=False,
+        authorized=sharing.user_id_can_use(db, user_id, "catalog_namespace", outside.namespace_id),
+        namespace_id=outside.namespace_id,
+        table_name=outside.table,
+        kept_elsewhere=outside.reference,
+    )
+
+
+def _outside_table_ref(reference: str, user_id: int | None):
+    """The ``IcebergTableRef`` of a table kept elsewhere for ``user_id``'s run: ciphertext only, Use checked.
+
+    Raises the sentence ``external_catalogs.table_ref_for_run`` words when the catalog is gone or not shared.
+    """
+    catalog, table = reference.split(".", 1)
+    with get_db_context() as db:
+        return table_ref_for_run(db, catalog, table, user_id, writes=False)
+
+
+def _outside_table_columns(reference: str, user_id: int | None) -> dict[str, pl.DataType]:
+    """The columns of a table kept elsewhere as its catalog describes them; no storage key is asked for.
+
+    Once described, the table has its lineage row (``_record_outside_table``).
+    """
+    from shared.iceberg_utils import describe_table
+
+    columns = dict(describe_table(_outside_table_ref(reference, user_id)).columns)
+    _record_outside_table(reference)
+    return columns
+
+
+def _record_outside_table(reference: str) -> None:
+    """Give a table kept elsewhere its ``catalog_tables`` row now that its catalog described it for a node.
+
+    The row is lineage only (``external_catalogs.ensure_table_row``), so a failure to write it is logged and never
+    fails the read.
+    """
+    try:
+        with get_db_context() as db:
+            ensure_table_row(db, outside_table(db, reference, None, None, source="local"))
+    except Exception:
+        logger.warning("Could not record the catalog row of %s", reference, exc_info=True)
+
+
+def unresolved_schema_refusal(svc: CatalogService, settings) -> str | None:
+    """Why a writer names no schema it can write, or ``None``: its ``namespace_full_name`` resolves nowhere here and it
+    holds no ``namespace_id`` to fall back to (a catalog removed or renamed, a flow from another install, a typo).
+
+    Without this refusal such a writer would write a table into no namespace at all. A writer on the hub names the
+    hub's schema, which resolves nowhere here by design: never refused.
+    """
+    if table_sources.is_remote(getattr(settings, "source", None)):
+        return None
+    name = getattr(settings, "namespace_full_name", None)
+    if not name or settings.namespace_id is not None or svc.resolve_namespace_id_by_full_name(name) is not None:
+        return None
+    return f"There is no catalog schema called {name} here; pick the schema again."
 
 
 def _effective_namespace_id(svc: CatalogService, settings) -> int | None:

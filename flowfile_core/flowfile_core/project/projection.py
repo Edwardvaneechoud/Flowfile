@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+from flowfile_core.catalog.repository import tables_kept_here
 from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.database.models import (
@@ -396,8 +397,13 @@ def namespace_manifest_data(db: Session, owner_id: int) -> dict:
     ``is_public`` marks a namespace every user sees (the seeded system ones, the demo catalog's): the
     import path resolves one to an existing row, never recreating it as a private duplicate, and
     creates a missing one public. A restore or reload removes an emptied namespace public or not,
-    except the built-in ones the catalog never deletes (``catalog.constants.is_seeded_namespace``)."""
-    rows = db.query(CatalogNamespace).filter(CatalogNamespace.owner_id == owner_id).all()
+    except the built-in ones the catalog never deletes (``catalog.constants.is_seeded_namespace``).
+    A catalog kept elsewhere is this install's own setting and holds a sign-in, so a project does not carry it."""
+    rows = (
+        db.query(CatalogNamespace)
+        .filter(CatalogNamespace.owner_id == owner_id, CatalogNamespace.kept_elsewhere.is_(False))
+        .all()
+    )
     catalogs: dict[str, dict] = {}
     schemas: dict[str, list[dict]] = {}
     for ns in rows:
@@ -513,8 +519,13 @@ def export_tables(db: Session, owner_id: int) -> dict[str, str]:
     are skipped (their serialized plan isn't portable; re-running the producer flow rebuilds them). Volatile
     data stats (row/size counts, run id, timestamps) are stripped so a pure data write doesn't churn the file.
     An import knows a table by its catalog, schema and name, so of tables sharing all three only the oldest row
-    is written."""
-    rows = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).order_by(CatalogTable.id).all()
+    is written. The lineage rows of tables a catalog kept elsewhere keeps are left out, as that catalog is."""
+    rows = (
+        db.query(CatalogTable)
+        .filter(CatalogTable.owner_id == owner_id, tables_kept_here())
+        .order_by(CatalogTable.id)
+        .all()
+    )
     by_key: dict[tuple, dict] = {}
     for table in rows:
         if table.table_type == "virtual" and not table.sql_query:

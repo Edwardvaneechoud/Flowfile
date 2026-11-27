@@ -250,12 +250,12 @@ class Refused(LookupError):
     """No token for a call to one of the remote's servers; ``shown`` is the sentence a refused call shows."""
 
 
-def refusal(error: BaseException) -> str | None:
-    """The sentence of the ``Refused`` somewhere in ``error``'s chain; else ``None``."""
+def refusal(error: BaseException, kind: type[BaseException] = Refused) -> str | None:
+    """The ``shown`` sentence of the ``kind`` somewhere in ``error``'s chain; else ``None``."""
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
-        if isinstance(current, Refused):
+        if isinstance(current, kind):
             return current.shown
         seen.add(id(current))
         current = current.__cause__ or current.__context__

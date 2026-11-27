@@ -2,10 +2,10 @@
 // A catalog row in the tree beside a hub: the storage kind off a hub row, a hub row's Shared title, and the row a
 // desktop without a hub has always had.
 import { h, nextTick, type FunctionalComponent } from "vue";
-import { createPinia } from "pinia";
+import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flow, ns, table } from "../../__fixtures__/catalogTree";
-import { fakeStorage, mountIn } from "../../__fixtures__/mount";
+import { fakeStorage, mountIn, text } from "../../__fixtures__/mount";
 import type { NamespaceTree } from "../../types";
 
 const sharing = vi.hoisted(() => ({ multiUser: false, owned: false }));
@@ -26,6 +26,7 @@ vi.mock("../../composables/useResourceSharing", () => ({
 }));
 
 import CatalogTreeNode from "./CatalogTreeNode.vue";
+import { useCatalogStore } from "../../stores/catalog-store";
 
 const stubs: Record<string, FunctionalComponent> = {
   "el-tooltip": (_, { slots }) => h("span", slots.default?.()),
@@ -236,5 +237,103 @@ describe("a hub flow's row", () => {
     expect(row?.querySelector("[data-testid='hub-flow-version']")).toBeNull();
     expect(row?.querySelectorAll(".flow-actions .action-btn").length).toBe(2);
     expect(row?.querySelector(".run-indicator")).not.toBeNull();
+  });
+});
+
+describe("a catalog kept elsewhere", () => {
+  const listedAt = "2026-11-24T09:05:00";
+  const localTime = (iso: string) => {
+    const d = new Date(iso + "Z");
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const kept = ns({
+    id: 60,
+    name: "polaris",
+    kept_elsewhere: true,
+    children: [ns({ id: 61, name: "sales", level: 1, parent_id: 60, kept_elsewhere: true })],
+  });
+
+  const mountWithStore = async (node: NamespaceTree) => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useCatalogStore();
+    store.externalTables["60:61"] = {
+      tables: [{ name: "orders", reference: "polaris.sales.orders" }],
+      listedAt,
+      loading: false,
+      error: null,
+    };
+    const load = vi.spyOn(store, "loadExternalTables").mockResolvedValue(undefined);
+    host = await mountIn(CatalogTreeNode, {
+      props: { node, selectedFlowId: null, selectedArtifactId: null, selectedTableId: null },
+      pinia,
+      stubs,
+    });
+    return load;
+  };
+
+  it("shows the catalog's refresh without hover, and when a schema's tables were listed with its own refresh", async () => {
+    const load = await mountWithStore(kept);
+
+    const refresh = host.querySelector("[data-testid='external-refresh']");
+    expect(refresh).not.toBeNull();
+    expect(refresh?.closest(".tree-actions")).toBeNull();
+
+    expect(text(host.querySelector("[data-testid='external-listed']"))).toBe(
+      `listed ${localTime(listedAt)}`,
+    );
+    load.mockClear();
+    (host.querySelector("[data-testid='external-tables-refresh']") as HTMLElement).click();
+    await nextTick();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledWith(60, 61, true);
+  });
+
+  it("opens the badge's pop-over without selecting, expanding or collapsing the catalog's row", async () => {
+    const select = vi.fn();
+    host = await mountIn(CatalogTreeNode, {
+      props: {
+        node: ns({
+          id: 62,
+          name: "polaris",
+          kept_elsewhere: true,
+          external: { uri: "http://polaris/api/catalog", warehouse: "w" },
+        } as Partial<NamespaceTree>),
+        selectedFlowId: null,
+        selectedArtifactId: null,
+        selectedTableId: null,
+        onSelectNamespace: select,
+      },
+      pinia: createPinia(),
+      stubs: {
+        ...stubs,
+        "el-popover": (_, { slots }) => h("span", [slots.reference?.(), slots.default?.()]),
+      },
+    });
+    const row = host.querySelector(".tree-row") as HTMLElement;
+    const expandedBefore = row.classList.contains("expanded");
+
+    (host.querySelector("[data-testid='external-badge']") as HTMLElement).click();
+    await nextTick();
+    expect(select).not.toHaveBeenCalled();
+    expect(row.classList.contains("expanded")).toBe(expandedBefore);
+
+    (host.querySelector(".ns-name") as HTMLElement).click();
+    expect(select).toHaveBeenCalledWith(62);
+  });
+
+  it("shows an ordinary catalog neither", async () => {
+    await mountWithStore(
+      ns({
+        id: 70,
+        storage_uri,
+        children: [ns({ id: 71, name: "default", level: 1, parent_id: 70, tables: [table()] })],
+      }),
+    );
+
+    expect(host.querySelector("[data-testid='external-refresh']")).toBeNull();
+    expect(host.querySelector("[data-testid='external-listed']")).toBeNull();
+    expect(host.querySelector("[data-testid='external-tables-refresh']")).toBeNull();
   });
 });

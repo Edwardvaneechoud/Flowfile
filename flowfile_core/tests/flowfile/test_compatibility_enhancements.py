@@ -12,10 +12,12 @@ from flowfile_core.flowfile.manage.compatibility_enhancements import (
     _build_input_table_settings,
     _build_output_table_settings,
     ensure_description,
+    ensure_user_id,
     ensure_compatibility_node_read,
     ensure_compatibility_node_output,
     ensure_compatibility_node_catalog_reader,
     ensure_compatibility_node_catalog_writer,
+    ensure_compatibility_node_cloud_storage_reader,
     ensure_compatibility_node_cloud_storage_writer,
     ensure_flow_settings,
 )
@@ -235,6 +237,40 @@ class TestEnsureDescription:
         assert node.description == "existing"
 
 
+class TestEnsureUserId:
+    """Test ensure_user_id function."""
+
+    def test_adds_missing_user_id(self):
+        node = input_schema.NodeManualInput(flow_id=1, node_id=1)
+        # Simulate a pickle written before nodes carried a user: the field is absent from __dict__
+        del node.__dict__["user_id"]
+        with pytest.raises(AttributeError):
+            _ = node.user_id
+
+        ensure_user_id(node)
+        assert node.user_id is None
+
+    def test_preserves_existing_user_id(self):
+        node = input_schema.NodeManualInput(flow_id=1, node_id=1, user_id=7)
+        ensure_user_id(node)
+        assert node.user_id == 7
+
+
+class TestEnsureCompatibilityNodeCloudStorageReader:
+    """Test ensure_compatibility_node_cloud_storage_reader function."""
+
+    def test_a_reader_pickled_before_the_iceberg_catalog_is_dumped_without_it(self):
+        from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings
+
+        settings = CloudStorageReadSettings(resource_path="s3://bucket/table", file_format="delta")
+        node = input_schema.NodeCloudStorageReader(flow_id=1, node_id=1, user_id=1, cloud_storage_settings=settings)
+        del node.cloud_storage_settings.__dict__["iceberg_catalog"]
+
+        ensure_compatibility_node_cloud_storage_reader(node)
+        assert node.cloud_storage_settings.iceberg_catalog is None
+        assert "iceberg_catalog" not in node.cloud_storage_settings.model_dump()
+
+
 class TestEnsureCompatibilityNodeCloudStorageWriter:
     """Test ensure_compatibility_node_cloud_storage_writer function."""
 
@@ -256,6 +292,14 @@ class TestEnsureCompatibilityNodeCloudStorageWriter:
 
         ensure_compatibility_node_cloud_storage_writer(node)
         assert node.cloud_storage_settings.partition_by is None
+
+    def test_adds_missing_iceberg_catalog(self):
+        node = self._make_node()
+        del node.cloud_storage_settings.__dict__["iceberg_catalog"]
+
+        ensure_compatibility_node_cloud_storage_writer(node)
+        assert node.cloud_storage_settings.iceberg_catalog is None
+        assert "iceberg_catalog" not in node.cloud_storage_settings.model_dump()
 
     def test_preserves_existing_partition_by(self):
         node = self._make_node()

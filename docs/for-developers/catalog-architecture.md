@@ -42,6 +42,25 @@ Authorization is the facade's job, implemented by `AccessResolver` (`catalog/acc
 !!! warning "The delete invariant"
     Every resource-delete path must call `sharing.delete_grants_for_resource`. SQLite reuses rowids, so a surviving grant row would silently attach itself to a future, unrelated resource. The repository does this on every delete and an ORM `after_delete` backstop covers `session.delete` — but bulk `query.delete()` bypasses ORM events and must clean up explicitly.
 
+## Catalogs kept elsewhere
+
+An Iceberg REST catalog added to Flowfile's catalog (`catalog/services/external_catalogs.py`, routes
+`routes/external_catalogs.py` at `/catalog/external`) is an ordinary level-0 `catalog_namespaces` row marked
+`kept_elsewhere`, with one `external_catalogs` row saying how to reach it: its address, warehouse, kind of sign-in,
+client id, scope and token endpoint, and the id of **one secret** of the owner's holding the sign-in (a bearer token,
+or a small JSON of the client id and secret that `shared/iceberg_utils.py::client_credentials_sign_in` writes and
+`sign_in_properties` reads; no other key can come out of it). The other catalog's top-level namespaces are level-1
+rows marked the same way, so grants, the tree and search treat them as any schema; `sync` adds new ones, sets
+`gone_since` on dropped ones and never deletes a row, since a grant may name it and SQLite reuses ids. Tables are
+never rows: they are listed live and kept a minute per schema in the process. Nothing is saved into such a schema:
+`CatalogService._require_namespace_writable` refuses it for every caller, and the three save paths outside the
+service (`catalog_helpers.require_flow_save_permitted`, `flow_graph/catalog_resolution._authorize_catalog_write`,
+`routes/routes.py`'s catalog-writer and train-model gates) call `refuse_kept_elsewhere`. A grant on such a catalog
+reaches its schemas in `sharing.granted_resource_ids` (a schema kept elsewhere holds no row that could show it). A
+flow names the catalog by name (`IcebergCatalogSettings.catalog`), and `table_ref_for_run` turns it into an
+`IcebergTableRef` holding the secret's ciphertext, after the run's grants are checked; the worker contract does not
+move. A project export leaves these catalogs out (`projection.namespace_manifest_data`).
+
 ## Virtual tables
 
 A `catalog_writer` node in virtual mode registers a table that stores no data and caches no plan; every read runs its producer:

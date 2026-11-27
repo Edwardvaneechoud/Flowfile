@@ -135,6 +135,33 @@ def test_a_cloud_change_read_is_a_plan_that_may_carry_a_python_function():
     )
 
 
+def test_an_iceberg_read_is_a_plan_over_s3_whose_source_is_a_python_function_and_names_no_connection():
+    cloud = cloud_storage_schemas.CloudStorageReadSettings(
+        resource_path="demo.orders",
+        file_format="iceberg",
+        iceberg_catalog=cloud_storage_schemas.IcebergCatalogSettings(uri="http://127.0.0.1:18181/catalog"),
+    )
+    settings = input_schema.NodeCloudStorageReader(**_ids(cloud_storage_settings=cloud))
+
+    assert _requirements("cloud_storage_reader", settings) == NodeRequirements(
+        read_schemes=frozenset({"s3"}), python_function=True
+    )
+
+
+def test_an_iceberg_write_runs_the_iceberg_write_and_writes_s3():
+    cloud = cloud_storage_schemas.CloudStorageWriteSettings(
+        resource_path="demo.orders",
+        file_format="iceberg",
+        write_mode="append",
+        iceberg_catalog=cloud_storage_schemas.IcebergCatalogSettings(uri="http://127.0.0.1:18181/catalog"),
+    )
+    settings = input_schema.NodeCloudStorageWriter(**_ids(cloud_storage_settings=cloud))
+
+    assert _requirements("cloud_storage_writer", settings) == NodeRequirements(
+        operation=OperationKind.iceberg_write, write_schemes=frozenset({"s3"})
+    )
+
+
 def test_a_cloud_read_without_a_connection_names_none():
     cloud = cloud_storage_schemas.CloudStorageReadSettings(resource_path="s3://bucket/data.parquet")
     settings = input_schema.NodeCloudStorageReader(**_ids(cloud_storage_settings=cloud))
@@ -581,3 +608,81 @@ def test_a_sql_query_node_runs_the_sql_query_operation():
     )
 
     assert _requirements("sql_query", settings) == NodeRequirements(operation=OperationKind.sql_query)
+
+
+@pytest.fixture
+def kept_and_own():
+    """A catalog kept elsewhere with a schema ``sales`` and a catalog of Flowfile's own with ``sch``, as rows."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace, ExternalCatalog
+
+    with get_db_context() as db:
+        kept = CatalogNamespace(name="placed_elsewhere", level=0, owner_id=1, kept_elsewhere=True)
+        own = CatalogNamespace(name="placed_here", level=0, owner_id=1)
+        db.add_all([kept, own])
+        db.commit()
+        sales = CatalogNamespace(name="sales", parent_id=kept.id, level=1, owner_id=1, kept_elsewhere=True)
+        sch = CatalogNamespace(name="sch", parent_id=own.id, level=1, owner_id=1)
+        db.add_all([sales, sch])
+        db.add(ExternalCatalog(namespace_id=kept.id, kind="iceberg_rest", uri="http://127.0.0.1:9/api", sign_in="none"))
+        db.commit()
+        ids = {"kept": kept.id, "sales": sales.id, "own": own.id, "sch": sch.id}
+    yield ids
+    with get_db_context() as db:
+        db.query(ExternalCatalog).filter_by(namespace_id=ids["kept"]).delete()
+        db.query(CatalogNamespace).filter(CatalogNamespace.id.in_([ids["sales"], ids["sch"]])).delete()
+        db.query(CatalogNamespace).filter(CatalogNamespace.id.in_([ids["kept"], ids["own"]])).delete()
+        db.commit()
+
+
+def _placed(item: str, settings) -> tuple[NodeRequirements, str | None]:
+    from flowfile_core.flowfile.execution.placement import _catalog_target
+
+    target, name, _ = _catalog_target(settings, None)
+    return _requirements(item, settings, catalog_target=target), name
+
+
+@pytest.mark.parametrize(
+    "named",
+    [
+        {"catalog_full_table_name": "placed_elsewhere.sales.orders"},
+        {"catalog_namespace_id": "sales", "catalog_table_name": "orders"},
+    ],
+    ids=["by name", "by schema id"],
+)
+def test_a_reader_of_a_table_kept_elsewhere_claims_s3_and_a_python_function(kept_and_own, named):
+    fields = {k: kept_and_own[v] if k == "catalog_namespace_id" else v for k, v in named.items()}
+    settings = input_schema.NodeCatalogReader(**_ids(**fields))
+
+    assert _placed("catalog_reader", settings) == (
+        NodeRequirements(read_schemes=frozenset({"s3"}), python_function=True),
+        "placed_elsewhere.sales.orders",
+    )
+
+
+@pytest.mark.parametrize("mode", ["append", "overwrite"])
+def test_a_writer_on_a_schema_kept_elsewhere_claims_the_iceberg_write_and_s3(kept_and_own, mode):
+    settings = input_schema.NodeCatalogWriter(**_ids(catalog_write_settings=input_schema.CatalogWriteSettings(
+        table_name="orders", namespace_full_name="placed_elsewhere.sales", write_mode=mode,
+    )))
+
+    assert _placed("catalog_writer", settings) == (
+        NodeRequirements(operation=OperationKind.iceberg_write, write_schemes=frozenset({"s3"})),
+        "placed_elsewhere.sales.orders",
+    )
+
+
+def test_a_delta_target_of_flowfiles_own_claims_what_it_claimed_before(kept_and_own):
+    writer = input_schema.NodeCatalogWriter(**_ids(catalog_write_settings=input_schema.CatalogWriteSettings(
+        table_name="orders", namespace_full_name="placed_here.sch", write_mode="append",
+    )))
+    reader = input_schema.NodeCatalogReader(**_ids(catalog_namespace_id=kept_and_own["sch"], catalog_table_name="o"))
+
+    written, written_name = _placed("catalog_writer", writer)
+    read, read_name = _placed("catalog_reader", reader)
+
+    assert (written.operation, written.write_schemes, written.python_function) == (
+        OperationKind.delta_write, frozenset({"file"}), False,
+    )
+    assert (read.read_schemes, read.python_function) == (frozenset({"file"}), False)
+    assert written_name == read_name == "placed_here.sch"

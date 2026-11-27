@@ -13,6 +13,7 @@ import pyarrow as pa
 
 from flowfile_core.configs import logger, node_store, settings
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import (
@@ -1233,11 +1234,12 @@ class FlowNode:
 
     def _note_prediction_refusal(self, error: BaseException) -> None:
         """Show the sentence a server of the hub refused this node's prediction with as its prediction warning, when
-        ``error`` is such a refusal (``registry.refusal``): the person asking has no sign-in through the hub here.
+        ``error`` is such a refusal (``registry.refusal``): the person asking has no sign-in through the hub here. A
+        path the person may not use on a server (``workspace.NotYours``) shows its sentence the same way.
 
         Without it the refusal reads as a node with no columns. Other errors are left as they are.
         """
-        sentence = registry.refusal(error)
+        sentence = registry.refusal(error) or registry.refusal(error, workspace.NotYours)
         if sentence is None:
             return
         self._prediction_refused = self._schema_prediction_blocked = self.results.warnings = sentence

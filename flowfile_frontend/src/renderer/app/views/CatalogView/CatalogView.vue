@@ -104,6 +104,13 @@
                 <el-dropdown-item @click="showCreateNamespace = true">
                   <i class="fa-solid fa-plus fa-fw"></i> New catalog
                 </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="mayAddExternal"
+                  data-testid="catalog-new-external"
+                  @click="showExternalCatalog = true"
+                >
+                  <i class="fa-solid fa-link fa-fw"></i> Add a catalog from elsewhere
+                </el-dropdown-item>
                 <el-dropdown-item @click="openRegisterTableGlobal">
                   <i class="fa-solid fa-table fa-fw"></i> Register table
                 </el-dropdown-item>
@@ -197,6 +204,8 @@
                 @namespace-share="openNamespaceShare($event)"
                 @cleanup-namespace="handleCleanupNamespace($event)"
                 @delete-namespace="handleDeleteSchema($event)"
+                @sync-external="handleSyncExternal($event)"
+                @select-external-table="selectExternalTable($event)"
               />
             </template>
           </div>
@@ -274,6 +283,16 @@
           @set-versions-page="catalogStore.setArtifactVersionsPage($event)"
           @versions-changed="refreshArtifactVersions()"
         />
+        <!-- A table of a catalog kept elsewhere, as that catalog describes it -->
+        <ExternalTableDetailPanel
+          v-else-if="externalSelection"
+          :catalog="catalogStore.findNamespaceInTree(externalSelection.catalogId)"
+          :catalog-id="externalSelection.catalogId"
+          :schema-id="externalSelection.schemaId"
+          :name="externalSelection.name"
+          @close="handleCloseDetail"
+          @navigate-to-flow="navigateToFlow($event)"
+        />
         <SemanticModelPanel
           v-else-if="catalogStore.selectedSemanticNamespaceId !== null"
           :namespace-id="catalogStore.selectedSemanticNamespaceId"
@@ -331,6 +350,7 @@
             openFlowInDesigner(catalogStore.selectedFlow, { codePane: 'notebook' })
           "
           @select-table="selectTable($event)"
+          @select-external-table="selectExternalTable($event)"
           @delete-flow="handleDeleteFlow($event)"
           @rename-flow="handleRenameFlow"
           @add-schedule="handleAddFlowSchedule"
@@ -454,6 +474,12 @@
     </div>
 
     <!-- Modals -->
+    <ExternalCatalogModal
+      :visible="showExternalCatalog"
+      @close="showExternalCatalog = false"
+      @saved="selectNamespace($event.id)"
+    />
+
     <CreateNamespaceModal
       :visible="showCreateNamespace"
       :parent-id="createSchemaParentId"
@@ -692,6 +718,8 @@ import HubFlowDetailPanel from "./HubFlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import TableDetailPanel from "./TableDetailPanel.vue";
 import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
+import ExternalCatalogModal from "./ExternalCatalogModal.vue";
+import ExternalTableDetailPanel from "./ExternalTableDetailPanel.vue";
 import SemanticModelPanel from "./SemanticModelPanel.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
@@ -714,6 +742,7 @@ import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { useAuthStore } from "../../stores/auth-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import {
   byPlace,
@@ -778,7 +807,8 @@ const { openFlow } = useFlowOpener();
 const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
 
 // Namespace sharing (one dialog for the whole tree).
-const { canManageGrants } = useResourceSharing();
+const { canManageGrants, isMultiUser } = useResourceSharing();
+const authStore = useAuthStore();
 const { writableSchemaNamespaces } = useWritableNamespaces();
 const shareNamespace = ref<NamespaceTree | null>(null);
 const showNamespaceShareDialog = ref(false);
@@ -933,6 +963,49 @@ function setTabsCompact(value: boolean) {
   }
 }
 const showCreateNamespace = ref(false);
+const showExternalCatalog = ref(false);
+// On a server the server calls the address and holds the sign-in, so only an administrator adds one.
+const mayAddExternal = computed(() => !isMultiUser.value || authStore.isAdmin);
+
+/** The table of a catalog kept elsewhere the URL names: `externalCatalog`, `schema` and `table`. */
+const externalSelection = computed(() => {
+  const q = route.query;
+  if (!q.externalCatalog || !q.schema || !q.table) return null;
+  return {
+    catalogId: Number(q.externalCatalog),
+    schemaId: Number(q.schema),
+    name: String(q.table),
+  };
+});
+
+function selectExternalTable(target: { catalogId: number; schemaId: number; name: string }) {
+  router.push({
+    name: "catalog",
+    query: {
+      tab: "catalog",
+      externalCatalog: String(target.catalogId),
+      schema: String(target.schemaId),
+      table: target.name,
+    },
+  });
+}
+
+async function handleSyncExternal(target: { id: number; force: boolean }) {
+  const result = await catalogStore.syncExternalCatalog(target.id, target.force);
+  if (target.force && result?.error) ElMessage.error(result.error);
+  else if (target.force && result) {
+    const changed = [...result.added, ...result.back].length + result.gone.length;
+    ElMessage.success(changed ? "The catalog's schemas were brought in line" : "Nothing changed");
+  }
+  if (target.force) {
+    for (const key of Object.keys(catalogStore.externalTables)) {
+      if (key.startsWith(`${target.id}:`)) {
+        const schemaId = Number(key.split(":")[1]);
+        void catalogStore.loadExternalTables(target.id, schemaId, true);
+      }
+    }
+  }
+}
 const createSchemaParentId = ref<number | null>(null);
 const showRegisterFlow = ref(false);
 const registerFlowNamespaceId = ref<number | null>(null);

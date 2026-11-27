@@ -8,6 +8,8 @@ import type {
 import { resolveCatalogRefs } from "./catalogRefResolver";
 import {
   isBatchActive,
+  namespaceGeneration,
+  noteNamespace,
   onExecutionSettled,
   onSessionEpoch,
   type SettledMeta,
@@ -180,6 +182,7 @@ async function doRefresh(ownerId: string, state: OwnerState, allowRetry: boolean
   const ctx = state.getCtx?.();
   const kernelId = ctx?.kernelId;
   if (!ctx || !kernelId) return;
+  const known = namespaceGeneration(ownerId);
   if (!ctx.fetchSchemas && !(await LspApi.capabilities())?.enabled) return;
 
   const flowId = ctx.flowId;
@@ -191,6 +194,12 @@ async function doRefresh(ownerId: string, state: OwnerState, allowRetry: boolean
   if (owners.get(ownerId) !== state) return;
   const now = state.getCtx?.();
   if (!now || now.kernelId !== kernelId || now.flowId !== flowId) return;
+
+  // A run that started or settled meanwhile knows the namespace better than this answer does.
+  if (!isBatchActive(ownerId) && namespaceGeneration(ownerId) === known) {
+    if (response.namespace_generation) noteNamespace(ownerId, response.namespace_generation);
+    else if (response.answered) noteNamespace(ownerId, null);
+  }
 
   // "No namespace for this flow" needs no generation/revision: there is nothing to be older than.
   if (response.state === "unavailable") {

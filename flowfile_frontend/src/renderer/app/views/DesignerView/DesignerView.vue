@@ -118,6 +118,13 @@ import { useFlowOpener } from "../../composables/useFlowOpener";
 import type { RecentFlow } from "../../composables/useRecentFlows";
 import { resolveBootFlowId, resolveNextFlowAfterClose } from "./flowSessionState";
 import { clampDockWidth, dragWidth } from "./codeDockResize";
+import { useRoute, useRouter } from "vue-router";
+import { useFileBrowserStore } from "../../stores/fileBrowserStore";
+import {
+  OPEN_WORKSPACE_QUERY,
+  asksForWorkspace,
+  requestWorkspaceOpen,
+} from "../../components/common/FileBrowser/workspaceRoots";
 
 const getAllFlows = FlowApi.getAllFlows;
 const closeFlow = FlowApi.closeFlow;
@@ -405,10 +412,25 @@ const initialSetup = async () => {
   }
 };
 
+const route = useRoute();
+const router = useRouter();
+
+/** `?open=workspace` (a hub's "Open your workspace"): the Open dialog on its file tab, at the person's own folder. */
+async function openWorkspaceIfAsked() {
+  if (!asksForWorkspace(route.query)) return;
+  useFileBrowserStore().resetContext("flows");
+  requestWorkspaceOpen();
+  headerButtons.value?.openOpenDialog();
+  const query = { ...route.query };
+  delete query[OPEN_WORKSPACE_QUERY.key];
+  await router.replace({ query });
+}
+
 onMounted(async () => {
   console.log("Component mounted, starting initialization");
   window.addEventListener("resize", reclampDock);
   await initialSetup();
+  await openWorkspaceIfAsked();
 });
 
 onBeforeUnmount(() => {

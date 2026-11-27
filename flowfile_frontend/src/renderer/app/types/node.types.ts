@@ -1472,6 +1472,7 @@ export interface CatalogNamespaceOut {
   description?: string | null;
   access?: AccessInfo | null;
   source?: "local" | "hub";
+  kept_elsewhere?: boolean;
 }
 
 export interface CatalogNamespaceTree extends CatalogNamespaceOut {

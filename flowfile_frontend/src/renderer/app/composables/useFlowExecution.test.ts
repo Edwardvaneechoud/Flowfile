@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   tutorial: vi.fn(),
   getFlowSettings: vi.fn(),
   revealConflicts: vi.fn(),
+  externalTablesStale: vi.fn(),
   nodeState: {
     flow_id: 1,
     nodeId: -1,
@@ -45,6 +46,9 @@ vi.mock("../stores/merge-conflicts-store", () => ({
 }));
 vi.mock("../stores/tutorial-store", () => ({
   useTutorialStore: () => ({ notify: mocks.tutorial }),
+}));
+vi.mock("../stores/catalog-store", () => ({
+  useCatalogStore: () => ({ markExternalTablesStale: mocks.externalTablesStale }),
 }));
 
 import { compile, onUnmounted, ref, type VNode } from "vue";
@@ -254,16 +258,39 @@ describe("useFlowExecution.runFlow", () => {
       mocks.getFlowSettings.mockResolvedValue({ is_running: true, is_canceled: false });
       await loadHeaderSettings(owner);
       mocks.notify.mockClear();
+      mocks.externalTablesStale.mockClear();
       mocks.get.mockResolvedValue({ status: 200, data: { flow_id: 1, success } });
       await vi.advanceTimersByTimeAsync(2000);
 
       expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ title: success ? "Success" : "Error" }),
       );
+      expect(mocks.externalTablesStale).toHaveBeenCalledOnce();
       expect(useEditorStore().isRunning).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+
+  it("ends the run and notifies even when marking the outside tables stale fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const owner = useFlowExecution(
+      1,
+      { interval: 2000, enabled: true, maxAttempts: 1 },
+      { persistPolling: true },
+    );
+    await owner.runFlow();
+    mocks.notify.mockClear();
+    mocks.externalTablesStale.mockImplementationOnce(() => {
+      throw new Error("store fault");
+    });
+    mocks.get.mockResolvedValue({ status: 200, data: { flow_id: 1, success: true } });
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(mocks.externalTablesStale).toHaveBeenCalledOnce();
+    expect(useEditorStore().isRunning).toBe(false);
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ title: "Success" }));
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it.each(["start", "cancel"])(
     "ignores a settings reply overtaken by a local %s",

@@ -291,12 +291,12 @@ Leave `FLOWFILE_KERNEL_IMAGE` empty to use the registry default, or set it to po
 
 ### What a kernel mounts
 
-A kernel mounts two folders, at the paths `flowfile-core` has them:
+A kernel mounts these folders, at the paths `flowfile-core` has them:
 
 - the kernels' shared folder, `/app/internal_storage/temp/kernel_shared`: node inputs and outputs, artifacts and the files written with `flowfile_ctx.get_shared_location()`;
-- the user data folder, `/app/user_data`, which holds the catalog's tables.
+- of the user data folder, `/app/user_data`: the catalog's tables, the `uploads` and `outputs` folders and its owner's own workspace (`workspaces/<user id>`) when user data is bind-mounted from a host folder, as in the bundled compose, and all of it when user data is a named volume.
 
-It mounts nothing else of the internal storage volume.
+It mounts nothing else of the internal storage volume. A file elsewhere in user data is read with a Read node.
 
 !!! warning "A named internal-storage volume needs Docker 26.0"
     Mounting one folder of a named volume needs Docker Engine 26.0 or newer. On an older Docker, with internal storage on a named volume as in the bundled compose, a kernel does not start and its error says so. Upgrade Docker, or give the shared folder a volume of its own, at the same path in `flowfile-core` and `flowfile-worker`:
@@ -315,34 +315,19 @@ When you create a kernel from the UI, packages listed in the **Extra Python pack
 
 ---
 
-## File Manager
+## Workspace
 
-*Docker mode only.*
+*Docker and server mode only.*
 
-The File Manager provides a web-based interface for uploading and downloading data files when running Flowfile in Docker (where users cannot browse the host filesystem).
+Each person on the server has a folder of their own, beside a **Shared** folder everyone uses. Open **Settings** (the gear icon in the left sidebar) and choose **Workspace → Workspace** to browse both.
 
-![File Manager](../../assets/images/guides/docker-deployment/file-manager.png)
+- Open folders, make a **New folder**, **Upload** files of any type (or drop them on the page) and **Download** a file.
+- An upload whose name a file in the folder already has asks first: **Replace** it, or **Keep both**.
+- **Delete** a file, or a folder with what is in it. The top folders themselves cannot be deleted, also where one is a link to another disk.
+- The flows folder is Flowfile's own: it is shown in **Shared**, and nothing is uploaded into it or deleted from it there.
+- Double-click a flow file, or select it and click **Open in designer**, to open it in the designer.
 
-*The File Manager showing uploaded files*
-
-### Supported formats
-
-CSV, Parquet, Excel (`.xlsx` and `.xls`), JSON, TSV, TXT
-
-### File size limit
-
-Maximum **500 MB** per file.
-
-### Usage
-
-1. Open **Settings** (the gear icon in the left sidebar) and choose **Workspace → File Manager**
-2. Click **Upload** to add a file
-3. Uploaded files appear in the file list and can be used in **Read Data** input nodes
-4. Click the delete icon to remove a file
-
-### Access
-
-The File Manager is only available when `FLOWFILE_MODE=docker` is set.
+Files uploaded before this page existed are in the `uploads` folder inside **Shared**. A single upload is at most **500 MB**.
 
 ## Troubleshooting
 

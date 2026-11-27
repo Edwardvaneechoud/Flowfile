@@ -12,7 +12,14 @@ vi.mock("element-plus", () => ({
   ElMessageBox: { confirm: vi.fn() },
 }));
 vi.mock("../../services/axios.config", () => ({ default: {} }));
-vi.mock("../../api/catalog.api", () => ({ CatalogApi: { deleteNamespace: vi.fn() } }));
+const { syncMock } = vi.hoisted(() => ({ syncMock: vi.fn() }));
+vi.mock("../../api/catalog.api", () => ({
+  CatalogApi: {
+    deleteNamespace: vi.fn(),
+    syncExternalCatalog: syncMock,
+    getNamespaceTree: vi.fn().mockResolvedValue([]),
+  },
+}));
 vi.mock("../CloudConnectionView/api", () => ({
   fetchCloudStorageConnectionsInterfaces: vi.fn().mockResolvedValue([]),
 }));
@@ -28,6 +35,7 @@ vi.mock("../../composables/useResourceSharing", () => ({
   }),
 }));
 vi.mock("./EditCatalogStorageModal.vue", () => ({ default: { render: () => null } }));
+vi.mock("./ExternalCatalogModal.vue", () => ({ default: { render: () => null } }));
 
 import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
 
@@ -97,5 +105,48 @@ describe("NamespaceDetailPanel", () => {
     } finally {
       sharing.owned = false;
     }
+  });
+});
+
+describe("NamespaceDetailPanel for a catalog kept elsewhere", () => {
+  const external = {
+    kind: "iceberg_rest",
+    uri: "http://127.0.0.1:18191/api/catalog",
+    warehouse: "signed",
+    sign_in: "client_credentials" as const,
+    client_id: "flowfile",
+    scope: "PRINCIPAL_ROLE:ALL",
+    token_endpoint: null,
+    synced_at: null,
+    sync_error: "No catalog answers at http://127.0.0.1:18191/api/catalog.",
+    not_shown: 2,
+  };
+
+  it("shows how it is reached and why it is behind, no storage editor and no secret", async () => {
+    syncMock.mockReset().mockResolvedValue({
+      added: [],
+      gone: [],
+      back: [],
+      not_shown: 2,
+      synced_at: null,
+      skipped: true,
+      error: null,
+    });
+    await mount(ns({ id: 7, name: "polaris", kept_elsewhere: true, external }));
+
+    const panel = (host.querySelector('[data-testid="external-panel"]')?.textContent ?? "").replace(
+      /\s+/g,
+      " ",
+    );
+    expect(panel).toContain(external.uri);
+    expect(panel).toContain("A client id and secret (flowfile)");
+    expect(host.querySelector('[data-testid="catalog-edit-storage"]')).toBeNull();
+    expect(host.querySelector('[data-testid="catalog-delete"]')).toBeNull();
+    expect(host.querySelector('[data-testid="external-sync-error"]')?.textContent).toContain(
+      "No catalog answers",
+    );
+    expect(host.textContent).toContain("2 namespaces of this catalog are not shown");
+    expect(host.textContent).not.toMatch(/secret:|client_secret/);
+    expect(syncMock).toHaveBeenCalledWith(7, false);
   });
 });

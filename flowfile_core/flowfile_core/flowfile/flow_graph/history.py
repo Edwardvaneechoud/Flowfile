@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from fastapi.exceptions import HTTPException
 
 from flowfile_core.configs import logger
+from flowfile_core.configs.settings import is_server_mode
 from flowfile_core.events import publish
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph._root import root
@@ -40,6 +41,17 @@ before a node exists; canvas requests and other threads never see it.
 """
 
 
+def stamp_session_person(graph: "FlowGraph", settings: Any) -> None:
+    """Make node settings carry the person whose editor session holds ``graph``, whatever ``user_id`` they came with.
+
+    On a server a flow open in a session is worked on by one person, so a node placed in it is theirs. A flow no
+    session holds (a headless, scheduled or sent run) keeps the user its settings carry, as does a desktop.
+    """
+    person = graph._session_user_id
+    if person is not None and hasattr(settings, "user_id") and is_server_mode():
+        settings.user_id = person
+
+
 def with_history_capture(action_type: "HistoryActionType", description_template: str = "Update {node_type} settings"):
     """Decorator that runs a FlowGraph mutator inside :meth:`FlowGraph.transaction`.
 
@@ -63,6 +75,7 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
         @functools.wraps(func)
         def wrapper(self: "FlowGraph", *args, **kwargs):
             settings_input = args[0] if args else next(iter(kwargs.values()), None)
+            stamp_session_person(self, settings_input)
             check = placement_check.get()
             if check is not None:
                 check(settings_input)

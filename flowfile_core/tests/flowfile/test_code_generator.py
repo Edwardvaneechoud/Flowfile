@@ -7222,6 +7222,96 @@ def test_cloud_storage_reader_handler_csv_unset_options():
     assert "encoding" not in code_output
 
 
+def test_an_iceberg_reader_exports_its_table_and_catalog():
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=1,
+        node_id=1,
+        cloud_storage_settings=cloud_ss.CloudStorageReadSettings(
+            resource_path="demo.orders",
+            file_format="iceberg",
+            iceberg_catalog=cloud_ss.IcebergCatalogSettings(uri="http://127.0.0.1:18181/catalog", warehouse="proof"),
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(create_basic_flow())
+    converter._handle_cloud_storage_reader(settings, "df_1", {})
+
+    assert converter.code_lines[:6] == [
+        "df_1 = ff.read_from_cloud_storage(",
+        '    "demo.orders",',
+        '    file_format="iceberg",',
+        "    catalog_uri='http://127.0.0.1:18181/catalog',",
+        "    catalog_warehouse='proof',",
+        ")",
+    ]
+
+
+def test_an_iceberg_writer_exports_its_table_catalog_and_mode():
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    catalog = cloud_ss.IcebergCatalogSettings(uri="http://127.0.0.1:18181/catalog", token_secret="lake-token")
+    settings = input_schema.NodeCloudStorageWriter(
+        flow_id=1,
+        node_id=2,
+        user_id=1,
+        cloud_storage_settings=cloud_ss.CloudStorageWriteSettings(
+            resource_path="demo.orders_grp3", file_format="iceberg", write_mode="append", iceberg_catalog=catalog
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(create_basic_flow())
+    converter._handle_cloud_storage_writer(settings, "df_2", {"main": "df_1"})
+
+    assert converter.code_lines[:8] == [
+        "ff.write_to_cloud_storage(",
+        "    df_1,",
+        '    "demo.orders_grp3",',
+        '    file_format="iceberg",',
+        "    catalog_uri='http://127.0.0.1:18181/catalog',",
+        "    catalog_token_secret='lake-token',",
+        '    write_mode="append",',
+        ")",
+    ]
+
+
+def test_an_iceberg_reader_and_writer_that_name_a_catalog_export_its_name():
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    named = cloud_ss.IcebergCatalogSettings(catalog="polaris")
+    reader = input_schema.NodeCloudStorageReader(
+        flow_id=1,
+        node_id=1,
+        cloud_storage_settings=cloud_ss.CloudStorageReadSettings(
+            resource_path="sales.orders", file_format="iceberg", iceberg_catalog=named
+        ),
+    )
+    writer = input_schema.NodeCloudStorageWriter(
+        flow_id=1,
+        node_id=2,
+        user_id=1,
+        cloud_storage_settings=cloud_ss.CloudStorageWriteSettings(
+            resource_path="sales.orders_grp3", file_format="iceberg", iceberg_catalog=named
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(create_basic_flow())
+    converter._handle_cloud_storage_reader(reader, "df_1", {})
+    converter._handle_cloud_storage_writer(writer, "df_2", {"main": "df_1"})
+
+    assert converter.code_lines[:5] == [
+        "df_1 = ff.read_from_cloud_storage(",
+        '    "sales.orders",',
+        '    file_format="iceberg",',
+        "    catalog='polaris',",
+        ")",
+    ]
+    written = "\n".join(converter.code_lines)
+    assert "    catalog='polaris'," in written.split("ff.write_to_cloud_storage(", 1)[1]
+    assert "catalog_uri" not in written
+
+
 def test_cloud_storage_reader_polars_unsupported():
     """Test that cloud storage reader is unsupported in Polars mode."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
