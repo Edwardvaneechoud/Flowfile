@@ -92,6 +92,22 @@ def scan_object_storage_table(
     return scan_delta(target, table.file_path, user_id)
 
 
+def stored_table_scan(table: CatalogTable | CatalogTableOut, user_id: int | None) -> pl.LazyFrame:
+    """A lazy scan of the rows a stored table holds, wherever they are; nothing is read here.
+
+    Raises:
+        ValueError: The table is virtual, so reading it would run what produces it, or names no stored data.
+    """
+    if table.table_type == "virtual" or not table.file_path:
+        raise ValueError(f"Table '{table.name}' is virtual: it holds no stored rows")
+    if _is_cloud_uri(table.file_path):
+        [target] = row_targets([table], user_id, "read")
+        return scan_object_storage_table(table, target, user_id, table.name)
+    if is_delta_table(Path(table.file_path)):
+        return pl.scan_delta(table.file_path)
+    return pl.scan_parquet(table.file_path)
+
+
 def _lazy_writer_input(table_name: str, writer_node: FlowNode) -> pl.LazyFrame:
     """The plan a lazy producer's virtual writer receives, built from its input without running anything.
 

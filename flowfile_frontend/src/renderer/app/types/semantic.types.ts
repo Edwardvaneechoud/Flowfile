@@ -97,6 +97,38 @@ export interface JoinCheck {
   message: string;
 }
 
+/** One data rule of a column as the ledger stores it: its kind and that kind's parameters. */
+export interface DataRule {
+  check: string;
+  [parameter: string]: unknown;
+}
+
+/** One rule measured against its table (…/semantic-model/data-rules/run and /results). */
+export interface DataRuleResult {
+  table_id: number;
+  column: string;
+  rule: DataRule;
+  passed: boolean;
+  failed_rows: number;
+  total_rows: number;
+  origin: string | null;
+  /** Set when the rule could not be evaluated; it then did not pass. */
+  error: string | null;
+  ran_at: string | null;
+}
+
+export interface DataRuleTable {
+  table_id: number;
+  /** Why a table with rules was not run (a virtual table holds no stored rows). */
+  skipped: string | null;
+  results: DataRuleResult[];
+}
+
+export interface DataRulesRun {
+  run_id: string | null;
+  tables: DataRuleTable[];
+}
+
 export interface SemanticTable {
   table_id: number;
   key: string;

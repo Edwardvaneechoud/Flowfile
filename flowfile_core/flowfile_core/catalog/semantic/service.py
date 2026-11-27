@@ -29,7 +29,7 @@ from flowfile_core.catalog.exceptions import (
     SemanticValueError,
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.semantic import host
+from flowfile_core.catalog.semantic import data_rules, host
 from flowfile_core.catalog.service import CatalogService
 from flowfile_core.schemas import semantic_schema as s
 
@@ -365,6 +365,8 @@ class SemanticModelService:
                     sid = SubjectId.for_field(t.key, p.column) if p.kind == "field" else SubjectId.for_dataset(t.key)
                     if is_structural(sid, attribute):
                         raise SemanticValueError(f"{attribute!r} is read from the catalog and cannot be proposed")
+                    if p.kind == "field" and attribute == data_rules.ATTRIBUTE and value:
+                        data_rules.check_proposed(t, p.column, value)
                 if value is not None and value != []:
                     props.append(Proposal(str(sid), attribute, value))
                 elif not ai_source:
@@ -480,6 +482,64 @@ class SemanticModelService:
         columns, labels = {t.key: t.column_names for t in tables}, {t.key: t.name for t in tables}
         found = joins.check_all(snap.joins, columns, self._rows, labels=labels)
         return [s.JoinCheckOut(key=j.key, name=j.name, verdict=c.verdict, message=c.message) for j, c in found]
+
+    def run_data_rules(self, namespace_id: int, table_ids: list[int] | None = None) -> s.DataRulesRunOut:
+        """Run the accepted data rules of the model's tables (or of ``table_ids``) on the compute backend and log
+        the results under one run id. Reading rights suffice, and the catalog checks each table again before it is
+        scanned. Compute that cannot be reached raises, and nothing is logged."""
+        import uuid
+
+        maybe_sync()
+        scope = self.scope(namespace_id)
+        tables = list(scope.model_tables.values()) if table_ids is None else [scope.model_table(i) for i in table_ids]
+        with _ledger_errors(self.user_id):
+            runs = data_rules.run(self.view, self._catalog_service(), tables, self.user_id)
+            ran = [result for run in runs for result in run.results]
+            run_id = uuid.uuid4().hex if ran else None
+            if ran:
+                self.view.record_check_results(ran, runner=self.view.actor, run_id=run_id)
+        out = [
+            s.DataRuleTableOut(
+                table_id=run.table.uid,
+                skipped=run.skipped,
+                results=[self._rule_result(run.table, r.to_dict()) for r in run.results],
+            )
+            for run in runs
+        ]
+        return s.DataRulesRunOut(run_id=run_id, tables=out)
+
+    def data_rule_results(self, namespace_id: int) -> list[s.DataRuleTableOut]:
+        """Each table's newest logged run, kept only for the rules that are accepted now."""
+        scope = self.scope(namespace_id)
+        out: list[s.DataRuleTableOut] = []
+        with _ledger_errors(self.user_id):
+            for table in scope.model_tables.values():
+                newest = self.view.check_history(dataset=table.key, limit=1)
+                if not newest:
+                    continue
+                rules = data_rules.effective_rules(self.view, table.key)
+                logged = self.view.check_history(dataset=table.key, run_id=newest[0]["run_id"], limit=None)
+                results = [self._rule_result(table, row) for row in logged if self.may_read(row["subject"])]
+                kept = [r for r in results if any(r.rule == rule for rule, _origin in rules.get(r.column, ()))]
+                if kept:
+                    out.append(s.DataRuleTableOut(table_id=table.uid, results=kept))
+        return out
+
+    @staticmethod
+    def _rule_result(table: TableInfo, row: dict[str, Any]) -> s.DataRuleResultOut:
+        from glosslayer.ids import SubjectId
+
+        return s.DataRuleResultOut(
+            table_id=table.uid,
+            column=SubjectId.parse(row["subject"]).name,
+            rule=row["check"],
+            passed=row["passed"],
+            failed_rows=row["failed_rows"],
+            total_rows=row["total_rows"],
+            origin=row.get("origin"),
+            error=row.get("error"),
+            ran_at=row.get("ts"),
+        )
 
     def review_queue(self, namespace_id: int) -> list[s.ReviewItemOut]:
         """Open facts of the model, one entry per fact, one per group for a join or a metric."""

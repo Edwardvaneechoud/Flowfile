@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, event, inspect
 
 from flowfile_core.catalog.semantic import confidentiality, host
 from flowfile_core.database import connection
-from tests.semantic.world import World
+from tests.semantic.world import World, say
 
 _DDL = re.compile(r"^\s*(CREATE|ALTER|DROP)\b", re.IGNORECASE)
 
@@ -31,6 +31,9 @@ def test_opening_and_using_the_ledger_changes_no_schema(world: World, client) ->
         host.host()
         assert client.post(f"/catalog/namespaces/{world.sales_id}/semantic-model/sync").status_code == 200
         assert client.get(f"/catalog/namespaces/{world.sales_id}/semantic-model").status_code == 200
+        say(world.field("orders", "amount"), "checks", [{"check": "not_null"}])
+        ran = client.post(f"/catalog/namespaces/{world.sales_id}/semantic-model/data-rules/run")
+        assert ran.status_code == 200 and ran.json()["run_id"], ran.text
         with connection.get_db_context() as db:
             confidentiality.read_withheld(db, [world.orders_id])
     finally:

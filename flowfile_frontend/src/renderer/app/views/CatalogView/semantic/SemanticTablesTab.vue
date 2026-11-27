@@ -31,6 +31,19 @@
         <h3 class="table-name">{{ table.name }}</h3>
         <SemanticStatusChip :fact="table.facts.description" />
         <span class="table-count">{{ table.fields.length }} columns</span>
+        <template v-if="rulesIn(table).length > 0">
+          <span class="rule-summary" :data-testid="`rules-summary-${table.table_id}`">
+            {{ rulesSummary(rulesIn(table), store.ruleResults[table.table_id]) }}
+          </span>
+          <el-button
+            size="small"
+            :loading="store.rulesRunning.includes(table.table_id)"
+            :data-testid="`rules-run-${table.table_id}`"
+            @click="runRules(table)"
+          >
+            Run rules
+          </el-button>
+        </template>
         <el-tooltip content="Open table" placement="top" :show-after="300">
           <button
             class="open-table-btn"
@@ -52,7 +65,12 @@
         />
       </div>
 
-      <SemanticColumnGrid v-if="isOpen(table.table_id)" :table="table" @propose="send" />
+      <SemanticColumnGrid
+        v-if="isOpen(table.table_id)"
+        :table="table"
+        :rule-results="store.ruleResults[table.table_id]"
+        @propose="send"
+      />
     </section>
   </div>
 </template>
@@ -72,6 +90,7 @@ import SemanticColumnGrid from "./SemanticColumnGrid.vue";
 import SemanticInlineText from "./SemanticInlineText.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
 import SemanticSuggestMore from "./SemanticSuggestMore.vue";
+import { rulesOf, rulesSummary } from "./dataRules";
 import { notePending, tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
@@ -102,6 +121,24 @@ async function focusRequested() {
 
 watch([() => store.focusTableId, () => props.model], focusRequested, { immediate: true });
 onBeforeUnmount(() => clearTimeout(focusTimer));
+
+watch(() => store.namespaceId, store.loadRuleResults, { immediate: true });
+
+const rulesIn = (table: SemanticTable) =>
+  table.fields.flatMap((f) =>
+    rulesOf(f.facts.checks?.value).map((rule) => ({ column: f.name, rule })),
+  );
+
+async function runRules(table: SemanticTable) {
+  try {
+    const run = await store.runDataRules([table.table_id]);
+    const answered = run.tables.find((t) => t.table_id === table.table_id);
+    if (!answered) ElMessage.info("No accepted rules to run. A proposed rule runs once accepted.");
+    else if (answered.skipped) ElMessage.info(answered.skipped);
+  } catch (e) {
+    ElMessage.error(errorText(e, "Could not run the rules"));
+  }
+}
 
 const isOpen = (id: number) => !closed.value.has(id);
 const toggle = (id: number) => {
@@ -158,6 +195,11 @@ const saveTable = (table: SemanticTable, value: string) =>
   margin-left: auto;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+.rule-summary {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 
 .table-description {
