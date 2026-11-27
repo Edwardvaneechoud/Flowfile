@@ -10,9 +10,7 @@ Every test skips unless Polaris runs (``python -m test_utils.iceberg_rest start`
 (``SKIP_WORKER_TESTS=0``). Each test makes its own Polaris namespace and kernel row and drops them after.
 """
 
-import contextlib
 import json
-import re
 import uuid
 from pathlib import Path
 
@@ -21,140 +19,51 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.auth.jwt import create_kernel_token
 from flowfile_core.catalog.constants import KEPT_ELSEWHERE_FORMAT
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import CatalogNamespace, CatalogTable, Kernel
+from flowfile_core.database.models import CatalogNamespace, CatalogTable
 from shared.storage_config import storage
 from test_utils.iceberg_rest import fixtures
+from test_utils.iceberg_rest.pytest_fixtures import (
+    SecretValues,
+    add_catalog,
+    added_catalog,
+    clean_aws,
+    kernel_of,
+    namespace_on,
+    orders_frame as _orders,
+    principal,
+    remove_catalog,
+    secret_findings,
+    seed_orders,
+    signed,
+)
 
 pytestmark = pytest.mark.iceberg_rest
 
 SIGNED = fixtures.SIGNED_CATALOG_URI
 COLUMNS = [("id", "Int64"), ("grp", "Int64"), ("val", "Float64"), ("name", "String")]
-SECRET_SHAPES = {
-    "ciphertext": re.compile(r"\$ffsec\$"),
-    "storage key name": re.compile(r"s3\.(secret-access-key|session-token|access-key-id)"),
-    "AWS-style access key": re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16}\b"),
-    "bearer header": re.compile(r"Bearer\s+[A-Za-z0-9._-]{20,}"),
-    "client secret field": re.compile(r"client_secret"),
-}
-
-
-class _Values(list):
-    """Secret values a test searches for; its ``repr`` holds none of them."""
-
-    def __repr__(self) -> str:
-        return f"<{len(self)} secret values>"
-
-
-def _findings(text: str, values: list[str]) -> list[str]:
-    """Names of the secret shapes and indexes of the secret values found in ``text``; never a value."""
-    found = [name for name, shape in SECRET_SHAPES.items() if shape.search(text)]
-    return found + [f"value #{index}" for index, value in enumerate(values) if value and value in text]
-
-
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    from test_utils.s3.aws_profiles import isolate_aws
-
-    aws_dir = tmp_path / "aws"
-    aws_dir.mkdir()
-    isolate_aws(monkeypatch, aws_dir)
-
-
-@pytest.fixture(scope="module")
-def principal():
-    if not fixtures.signed_catalog_ready():
-        pytest.skip(fixtures.SIGNED_SKIP_REASON)
-    made = fixtures.new_principal()
-    yield made
-    fixtures.drop_principal(made.name)
-
-
-@pytest.fixture(scope="module")
-def signed(principal):
-    return fixtures.signed_catalog(principal)
-
-
-def _orders(rows: int, start: int = 0) -> pl.LazyFrame:
-    return (
-        pl.LazyFrame()
-        .select(pl.int_range(start, start + rows, dtype=pl.Int64).alias("id"))
-        .with_columns(
-            grp=pl.col("id") % 10, val=pl.col("id").cast(pl.Float64) * 0.5, name=pl.format("name-{}", pl.col("id"))
-        )
-    )
 
 
 @pytest.fixture
 def schema(signed):
     """A namespace of this test's own on Polaris holding ``orders``, 1000 rows PyIceberg wrote; dropped after."""
-    from shared.iceberg_utils import write_table
-
-    name = f"kernel_{uuid.uuid4().hex[:8]}"
-    signed.create_namespace(name)
-    frame = _orders(1000)
-    made = signed.create_table(
-        f"{name}.orders", schema=frame.collect().to_arrow(compat_level=pl.CompatLevel.oldest()).schema
-    )
-    write_table(made, frame, "append")
-    yield name
-    for identifier in signed.list_tables(name):
-        with contextlib.suppress(Exception):
-            signed.drop_table(identifier)
-    with contextlib.suppress(Exception):
-        signed.drop_namespace(name)
-
-
-def _add_catalog(principal, owner_id: int = 1) -> tuple[str, int]:
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
-
-    name = f"polaris_{uuid.uuid4().hex[:6]}"
-    body = ExternalCatalogCreate(
-        name=name,
-        uri=SIGNED,
-        warehouse=fixtures.SIGNED_WAREHOUSE,
-        sign_in="client_credentials",
-        client_id=principal.client_id,
-        client_secret=principal.client_secret,
-        scope=fixtures.SIGNED_SCOPE,
-    )
-    with get_db_context() as db:
-        CatalogService(SQLAlchemyCatalogRepository(db)).create_external_catalog(body, owner_id)
-        catalog_id = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).one().id
-    return name, catalog_id
-
-
-def _remove_catalog(name: str) -> None:
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-
-    with get_db_context() as db:
-        row = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).first()
-        if row is not None:
-            CatalogService(SQLAlchemyCatalogRepository(db)).delete_external_catalog(row.id)
+    with namespace_on(signed, "kernel") as name:
+        seed_orders(signed, f"{name}.orders")
+        yield name
 
 
 @pytest.fixture
 def polaris(principal, schema):
     """Polaris added to Flowfile's catalog by user 1 with a client id and secret: ``(name, catalog id, schema id)``."""
-    name, catalog_id = _add_catalog(principal)
-    with get_db_context() as db:
-        schema_id = db.query(CatalogNamespace).filter_by(parent_id=catalog_id, name=schema).one().id
-    yield name, catalog_id, schema_id
-    _remove_catalog(name)
+    with added_catalog(principal, schema) as added:
+        yield added
 
 
 @pytest.fixture
-def kernel():
+def kernel(kernel_of):
     """A TestClient signed as a running kernel of user 1, with its own token; every answer it got is in ``answers``."""
-    kernel_id, token_id = f"ext-kernel-{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
-    with get_db_context() as db:
-        db.add(Kernel(id=kernel_id, name="Outside catalog", user_id=1, token_id=token_id))
-        db.commit()
-    client = TestClient(main.app)
-    client.headers = {"X-Internal-Token": create_kernel_token(1, kernel_id, token_id), "X-Kernel-Id": kernel_id}
+    client = kernel_of(1)
     client.answers = []
     request = client.request
 
@@ -164,10 +73,7 @@ def kernel():
         return response
 
     client.request = recording
-    yield client
-    with get_db_context() as db:
-        db.query(Kernel).filter(Kernel.id == kernel_id).delete()
-        db.commit()
+    return client
 
 
 @pytest.fixture
@@ -389,9 +295,9 @@ def test_no_secret_is_in_a_listing(kernel, polaris, schema, signed, principal):
 
     keys = fixtures.key_values(storage_properties(signed.load_table(f"{schema}.orders")))
     token, _ = fixtures.fetch_token(principal)
-    values = _Values([principal.client_secret, principal.credential, token, *keys, fixtures.MINIO_ROOT_PASSWORD])
+    values = SecretValues([principal.client_secret, principal.credential, token, *keys, fixtures.MINIO_ROOT_PASSWORD])
     places = {"route": listed.text, "lookup": answered}
-    assert {place: _findings(text, values) for place, text in places.items()} == {place: [] for place in places}
+    assert {place: secret_findings(text, values) for place, text in places.items()} == {place: [] for place in places}
 
 
 def test_a_mistyped_table_is_a_422_with_a_sentence_and_makes_no_row(kernel, polaris, schema):
@@ -430,11 +336,11 @@ def test_no_sign_in_ciphertext_token_or_storage_key_reaches_the_kernel(
 
     keys = fixtures.key_values(storage_properties(signed.load_table(f"{schema}.orders")))
     token, _ = fixtures.fetch_token(principal)
-    values = _Values([principal.client_secret, principal.credential, token, *keys, fixtures.MINIO_ROOT_PASSWORD])
+    values = SecretValues([principal.client_secret, principal.credential, token, *keys, fixtures.MINIO_ROOT_PASSWORD])
     snapshot = Path(materialized.json()["path"]).read_bytes().decode("latin-1")
     places = {"answers": "\n".join(kernel.answers), "snapshot file": snapshot}
     assert len(kernel.answers) == 4
-    assert {place: _findings(text, values) for place, text in places.items()} == {place: [] for place in places}
+    assert {place: secret_findings(text, values) for place, text in places.items()} == {place: [] for place in places}
 
 
 def test_what_the_worker_is_refused_is_a_422_with_its_sentence(kernel, signed, schema, running_worker):
@@ -449,7 +355,7 @@ def test_what_the_worker_is_refused_is_a_422_with_its_sentence(kernel, signed, s
                 fixtures._root_headers(),
                 {"grant": {"type": "catalog", "privilege": privilege}},
             )
-        name, _ = _add_catalog(reader)
+        name, _ = add_catalog(reader)
         try:
             resolved = _resolve(kernel, f"{name}.{schema}.orders")
             assert resolved.status_code == 200, resolved.text
@@ -461,7 +367,7 @@ def test_what_the_worker_is_refused_is_a_422_with_its_sentence(kernel, signed, s
             assert refused.json()["detail"] == f"The catalog at {SIGNED} knows this sign-in and does not allow it this."
             assert list(storage.shared_virtual_results_directory.glob(f"fvt-{table_id}-*.arrow")) == []
         finally:
-            _remove_catalog(name)
+            remove_catalog(name)
     finally:
         fixtures.drop_principal(reader.name)
 
@@ -497,7 +403,7 @@ def test_only_a_childs_refusal_is_a_sentence_with_its_paths_scrubbed_and_its_add
 
 
 def test_the_row_and_its_snapshot_file_go_with_the_catalog(kernel, person, principal, schema, running_worker):
-    name, catalog_id = _add_catalog(principal)
+    name, catalog_id = add_catalog(principal)
     try:
         table_id = _resolve(kernel, f"{name}.{schema}.orders").json()["table"]["id"]
         materialized = kernel.post(f"/catalog/tables/{table_id}/materialize")
@@ -513,7 +419,7 @@ def test_the_row_and_its_snapshot_file_go_with_the_catalog(kernel, person, princ
         assert not snapshot.exists()
         assert list(storage.shared_virtual_results_directory.glob(f"fvt-{table_id}-*.arrow")) == []
     finally:
-        _remove_catalog(name)
+        remove_catalog(name)
 
 
 @pytest.fixture

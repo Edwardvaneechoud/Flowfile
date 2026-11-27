@@ -23,19 +23,11 @@ from shared import iceberg_utils
 from shared.iceberg_utils import storage_properties, write_table
 from shared.tests.iceberg.table_child import rows_frame
 from test_utils.iceberg_rest import fixtures
+from test_utils.iceberg_rest.pytest_fixtures import clean_aws, polaris_body, signed
 
 pytestmark = pytest.mark.iceberg_rest
 
 SIGNED = fixtures.SIGNED_CATALOG_URI
-
-
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    from test_utils.s3.aws_profiles import isolate_aws
-
-    aws_dir = tmp_path / "aws"
-    aws_dir.mkdir()
-    isolate_aws(monkeypatch, aws_dir)
 
 
 @pytest.fixture(scope="module")
@@ -51,11 +43,6 @@ def principal(catalogs_up):
     made = fixtures.new_principal()
     yield made
     fixtures.drop_principal(made.name)
-
-
-@pytest.fixture(scope="module")
-def signed(principal):
-    return fixtures.signed_catalog(principal)
 
 
 class _Answers(list):
@@ -106,19 +93,6 @@ def _namespace(signed, made, name: str | None = None) -> str:
     return name
 
 
-def _signed_body(principal, name: str | None = None, **overrides) -> dict:
-    return {
-        "name": name or f"polaris_{uuid.uuid4().hex[:6]}",
-        "uri": SIGNED,
-        "warehouse": fixtures.SIGNED_WAREHOUSE,
-        "sign_in": "client_credentials",
-        "client_id": principal.client_id,
-        "client_secret": principal.client_secret,
-        "scope": fixtures.SIGNED_SCOPE,
-        **overrides,
-    }
-
-
 def _leaks(principal, answers, *tokens) -> list[int]:
     forms = [principal.client_secret, principal.credential, *tokens]
     return [index for index, text in enumerate(answers) if any(form in text for form in forms)]
@@ -138,7 +112,7 @@ def _tree_node(api, namespace_id: int) -> dict:
 def test_adding_a_signed_catalog_makes_its_schemas_rows_and_stores_one_secret(api, principal, signed, made_namespaces):
     first, second = _namespace(signed, made_namespaces), _namespace(signed, made_namespaces)
 
-    added = api.call("POST", "/catalog/external", json=_signed_body(principal))
+    added = api.call("POST", "/catalog/external", json=polaris_body(principal))
 
     assert added.status_code == 201, added.json().get("detail")
     answer = added.json()
@@ -184,7 +158,7 @@ def test_the_open_catalog_is_added_with_no_sign_in_and_stores_no_secret(api, cat
 
 def test_test_says_signed_in_or_why_not(api, principal):
     def tried(**overrides) -> dict:
-        body = {key: value for key, value in _signed_body(principal, **overrides).items() if key != "name"}
+        body = {key: value for key, value in polaris_body(principal, **overrides).items() if key != "name"}
         response = api.call("POST", "/catalog/external/test", json=body)
         assert response.status_code == 200
         return response.json()
@@ -208,7 +182,7 @@ def test_test_says_signed_in_or_why_not(api, principal):
 @pytest.fixture
 def polaris(api, principal):
     """A Polaris catalog added through the API; its namespace id."""
-    added = api.call("POST", "/catalog/external", json=_signed_body(principal))
+    added = api.call("POST", "/catalog/external", json=polaris_body(principal))
     assert added.status_code == 201, added.json().get("detail")
     return added.json()["id"]
 

@@ -14,18 +14,10 @@ from fastapi.testclient import TestClient
 from flowfile_worker import main
 from flowfile_worker.protocol_routes import OpOutputs
 from test_utils.iceberg_rest import fixtures
-from test_utils.s3.aws_profiles import isolate_aws
+from test_utils.iceberg_rest.pytest_fixtures import clean_aws
 from tests.conftest import V1_HEADERS
 
 client = TestClient(main.app, headers=V1_HEADERS)
-
-
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    """No ambient AWS key or profile, and a closed endpoint for anything that falls back to the environment."""
-    aws = tmp_path / "aws"
-    aws.mkdir()
-    isolate_aws(monkeypatch, aws)
 
 
 @pytest.fixture(scope="module")

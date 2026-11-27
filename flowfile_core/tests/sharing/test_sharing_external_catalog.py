@@ -11,43 +11,9 @@ import uuid
 import pytest
 
 from test_utils.iceberg_rest import fixtures
+from test_utils.iceberg_rest.pytest_fixtures import clean_aws, kernel_of, polaris_body, principal, signed
 
 SIGNED = fixtures.SIGNED_CATALOG_URI
-
-
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    from test_utils.s3.aws_profiles import isolate_aws
-
-    aws_dir = tmp_path / "aws"
-    aws_dir.mkdir()
-    isolate_aws(monkeypatch, aws_dir)
-
-
-@pytest.fixture(scope="module")
-def principal():
-    if not fixtures.signed_catalog_ready():
-        pytest.skip(fixtures.SIGNED_SKIP_REASON)
-    made = fixtures.new_principal()
-    yield made
-    fixtures.drop_principal(made.name)
-
-
-@pytest.fixture(scope="module")
-def signed(principal):
-    return fixtures.signed_catalog(principal)
-
-
-def _body(principal, name: str) -> dict:
-    return {
-        "name": name,
-        "uri": SIGNED,
-        "warehouse": fixtures.SIGNED_WAREHOUSE,
-        "sign_in": "client_credentials",
-        "client_id": principal.client_id,
-        "client_secret": principal.client_secret,
-        "scope": fixtures.SIGNED_SCOPE,
-    }
 
 
 @pytest.fixture
@@ -97,7 +63,7 @@ def polaris(client_for, principal, signed, made_namespaces):
         signed.create_namespace(name)
         made_namespaces.append(name)
     admin = client_for("admin")
-    added = admin.post("/catalog/external", json=_body(principal, f"polaris_{uuid.uuid4().hex[:6]}"))
+    added = admin.post("/catalog/external", json=polaris_body(principal, f"polaris_{uuid.uuid4().hex[:6]}"))
     assert added.status_code == 201, added.json().get("detail")
     catalog_id = added.json()["id"]
     node = next(n for n in admin.get("/catalog/namespaces/tree").json() if n["id"] == catalog_id)
@@ -504,37 +470,6 @@ def test_a_kernels_lookup_for_someone_without_use_is_not_authorized_and_asks_the
     assert asked == []
 
 
-@pytest.fixture
-def kernel_of():
-    """A TestClient signed as a running kernel of a user, with that kernel's own token; teardown removes the rows."""
-    from fastapi.testclient import TestClient
-
-    from flowfile_core import main
-    from flowfile_core.auth.jwt import create_kernel_token
-    from flowfile_core.database.connection import get_db_context
-    from flowfile_core.database.models import Kernel
-
-    made: list[str] = []
-
-    def _client(user_id: int) -> TestClient:
-        kernel_id, token_id = f"ext-share-{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
-        with get_db_context() as db:
-            db.add(Kernel(id=kernel_id, name="Outside catalog", user_id=user_id, token_id=token_id))
-            db.commit()
-        made.append(kernel_id)
-        client = TestClient(main.app)
-        client.headers = {
-            "X-Internal-Token": create_kernel_token(user_id, kernel_id, token_id),
-            "X-Kernel-Id": kernel_id,
-        }
-        return client
-
-    yield _client
-    with get_db_context() as db:
-        db.query(Kernel).filter(Kernel.id.in_(made)).delete(synchronize_session=False)
-        db.commit()
-
-
 @pytest.mark.iceberg_rest
 def test_a_kernel_whose_owner_has_no_use_gets_the_access_sentence_and_the_other_catalog_is_asked_nothing(
     users, client_for, polaris, seeded, team, grant_factory, kernel_of, monkeypatch
@@ -636,7 +571,7 @@ def test_a_second_catalog_renamed_onto_a_shared_ones_name_lists_nothing_for_some
     name = _catalog_name(client_for, catalog_id)
     grant_factory("catalog_namespace", schema_id, team, permission="use", granted_by=users["admin"].id)
     admin = client_for("admin")
-    added = admin.post("/catalog/external", json=_body(principal, f"other_{uuid.uuid4().hex[:6]}"))
+    added = admin.post("/catalog/external", json=polaris_body(principal, f"other_{uuid.uuid4().hex[:6]}"))
     assert added.status_code == 201, added.json().get("detail")
     other_id = added.json()["id"]
     try:
@@ -897,7 +832,7 @@ def test_deleting_the_owners_account_leaves_the_catalog_needing_its_sign_in_and_
     name = f"alices_{uuid.uuid4().hex[:6]}"
     with get_db_context() as db:
         catalog_id = ExternalCatalogService(SQLAlchemyCatalogRepository(db)).create(
-            ExternalCatalogCreate(**_body(principal, name)), users["alice"].id
+            ExternalCatalogCreate(**polaris_body(principal, name)), users["alice"].id
         ).id
     try:
         _, secret_id = _sign_in_of(catalog_id)

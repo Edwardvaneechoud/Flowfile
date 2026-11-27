@@ -26,12 +26,11 @@ import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
-from flowfile_core import main
-from flowfile_core.auth.jwt import create_kernel_token
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import CatalogNamespace, CatalogTable, Kernel, User
+from flowfile_core.database.models import CatalogNamespace, CatalogTable, User
 from flowfile_frame import _metadata
 from test_utils.iceberg_rest import fixtures
+from test_utils.iceberg_rest.pytest_fixtures import added_catalog, clean_aws, kernel_of, namespace_on, principal, signed
 from tests.notebook.conftest import IN_KERNEL_OP
 
 pytestmark = pytest.mark.iceberg_rest
@@ -44,74 +43,25 @@ WRITE_SENTENCE = (
 )
 
 
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    from test_utils.s3.aws_profiles import isolate_aws
-
-    aws_dir = tmp_path / "aws"
-    aws_dir.mkdir()
-    isolate_aws(monkeypatch, aws_dir)
-
-
-@pytest.fixture(scope="module")
-def principal():
-    if not fixtures.signed_catalog_ready():
-        pytest.skip(fixtures.SIGNED_SKIP_REASON)
-    made = fixtures.new_principal()
-    yield made
-    fixtures.drop_principal(made.name)
-
-
-@pytest.fixture(scope="module")
-def signed(principal):
-    return fixtures.signed_catalog(principal)
-
-
 @pytest.fixture
 def schema(signed):
     """A namespace of this test's own on Polaris holding ``orders``, 1000 rows PyIceberg wrote; dropped after."""
     from shared.iceberg_utils import write_table
 
-    name = f"cell_{uuid.uuid4().hex[:8]}"
-    signed.create_namespace(name)
-    frame = pl.LazyFrame({"id": list(range(1000))}, schema={"id": pl.Int64})
-    made = signed.create_table(
-        f"{name}.orders", schema=frame.collect().to_arrow(compat_level=pl.CompatLevel.oldest()).schema
-    )
-    write_table(made, frame, "append")
-    yield name
-    for identifier in signed.list_tables(name):
-        with contextlib.suppress(Exception):
-            signed.drop_table(identifier)
-    with contextlib.suppress(Exception):
-        signed.drop_namespace(name)
+    with namespace_on(signed, "cell") as name:
+        frame = pl.LazyFrame({"id": list(range(1000))}, schema={"id": pl.Int64})
+        made = signed.create_table(
+            f"{name}.orders", schema=frame.collect().to_arrow(compat_level=pl.CompatLevel.oldest()).schema
+        )
+        write_table(made, frame, "append")
+        yield name
 
 
 @contextlib.contextmanager
 def _added(principal, schema: str) -> Iterator[str]:
     """Polaris added to Flowfile's catalog by user 1 with ``principal``'s client id and secret: ``catalog.schema``."""
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
-
-    name = f"polaris_{uuid.uuid4().hex[:6]}"
-    body = ExternalCatalogCreate(
-        name=name,
-        uri=fixtures.SIGNED_CATALOG_URI,
-        warehouse=fixtures.SIGNED_WAREHOUSE,
-        sign_in="client_credentials",
-        client_id=principal.client_id,
-        client_secret=principal.client_secret,
-        scope=fixtures.SIGNED_SCOPE,
-    )
-    with get_db_context() as db:
-        CatalogService(SQLAlchemyCatalogRepository(db)).create_external_catalog(body, 1)
-    try:
+    with added_catalog(principal) as (name, _, _):
         yield f"{name}.{schema}"
-    finally:
-        with get_db_context() as db:
-            row = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).first()
-            if row is not None:
-                CatalogService(SQLAlchemyCatalogRepository(db)).delete_external_catalog(row.id)
 
 
 @pytest.fixture
@@ -137,27 +87,6 @@ def described_only(signed, schema):
             yield where
     finally:
         fixtures.drop_principal(reader.name)
-
-
-@pytest.fixture
-def kernel_of():
-    """A TestClient signed as a running kernel of a user, with that kernel's own token; the rows go after."""
-    made: list[str] = []
-
-    def _client(user_id: int) -> TestClient:
-        kernel_id, token_id = f"cell-kernel-{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
-        with get_db_context() as db:
-            db.add(Kernel(id=kernel_id, name="Catalog cell", user_id=user_id, token_id=token_id))
-            db.commit()
-        made.append(kernel_id)
-        client = TestClient(main.app)
-        client.headers = {"X-Internal-Token": create_kernel_token(user_id, kernel_id, token_id), "X-Kernel-Id": kernel_id}
-        return client
-
-    yield _client
-    with get_db_context() as db:
-        db.query(Kernel).filter(Kernel.id.in_(made)).delete(synchronize_session=False)
-        db.commit()
 
 
 def _runtime_transport(client: TestClient, between=None):

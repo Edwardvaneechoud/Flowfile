@@ -10,6 +10,7 @@ import uuid
 import pytest
 
 from test_utils.iceberg_rest import fixtures
+from test_utils.iceberg_rest.pytest_fixtures import clean_aws  # noqa: F401  (autouse for this folder)
 
 SKIP_REASON = fixtures.SKIP_REASON
 
@@ -21,16 +22,6 @@ def rest_catalog():
     from pyiceberg.catalog import load_catalog
 
     return load_catalog("proof", **fixtures.catalog_properties())
-
-
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    """No ambient AWS key or profile, and a closed endpoint for anything that falls back to the environment."""
-    from test_utils.s3.aws_profiles import isolate_aws
-
-    aws_dir = tmp_path / "aws"
-    aws_dir.mkdir()
-    isolate_aws(monkeypatch, aws_dir)
 
 
 @pytest.fixture(scope="session")

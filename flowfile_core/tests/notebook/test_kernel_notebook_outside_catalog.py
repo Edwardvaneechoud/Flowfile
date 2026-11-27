@@ -22,20 +22,28 @@ import asyncio
 import contextlib
 import json
 import os
-import re
 import socket
 import subprocess
 import threading
 import time
 import uuid
 
-import polars as pl
 import pytest
 
 from flowfile_core.notebook.render import render
 from shared.notebook_display import TABLE_MIME
 from test_utils.iceberg_rest import fixtures
-from test_utils.s3.aws_profiles import isolate_aws
+from test_utils.iceberg_rest.pytest_fixtures import (
+    SecretValues,
+    added_catalog,
+    clean_aws,
+    namespace_on,
+    orders_frame as _orders,
+    principal,
+    secret_findings,
+    seed_orders,
+    signed,
+)
 from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance
 
 IMAGE = os.environ.get("FLOWFILE_TEST_NOTEBOOK_IMAGE", "flowfile-kernel-notebook:local")
@@ -67,105 +75,24 @@ MISSING = _missing()
 pytestmark = [pytest.mark.kernel, pytest.mark.iceberg_rest, pytest.mark.skipif(bool(MISSING), reason=MISSING or "")]
 
 
-class _Values(list):
-    """Secret values a test searches for; its ``repr`` holds none of them."""
-
-    def __repr__(self) -> str:
-        return f"<{len(self)} secret values>"
-
-
-SECRET_SHAPES = {
-    "ciphertext": re.compile(r"\$ffsec\$"),
-    "storage key name": re.compile(r"s3\.(secret-access-key|session-token|access-key-id)"),
-    "AWS-style access key": re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16}\b"),
-    "bearer header": re.compile(r"Bearer\s+[A-Za-z0-9._-]{20,}"),
-    "client secret field": re.compile(r"client_secret"),
-}
-
-
-def _secret_findings(text: str, values: list[str]) -> list[str]:
-    """Names of the secret shapes and indexes of the secret values found in ``text``; never a value."""
-    found = [name for name, shape in SECRET_SHAPES.items() if shape.search(text)]
-    return found + [f"value #{index}" for index, value in enumerate(values) if value and value in text]
-
-
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    """No ambient AWS key or profile, and a closed endpoint for anything that falls back to the environment."""
-    aws = tmp_path / "aws"
-    aws.mkdir()
-    isolate_aws(monkeypatch, aws)
-
-
-@pytest.fixture(scope="module")
-def principal():
-    made = fixtures.new_principal()
-    yield made
-    fixtures.drop_principal(made.name)
-
-
-@pytest.fixture(scope="module")
-def signed(principal):
-    return fixtures.signed_catalog(principal)
-
-
 @pytest.fixture(scope="module")
 def schema(signed):
     """A namespace of this module's own on Polaris; dropped with its tables after the module."""
-    name = f"kernel_{uuid.uuid4().hex[:8]}"
-    signed.create_namespace(name)
-    yield name
-    for identifier in signed.list_tables(name):
-        with contextlib.suppress(Exception):
-            signed.drop_table(identifier)
-    with contextlib.suppress(Exception):
-        signed.drop_namespace(name)
+    with namespace_on(signed, "kernel") as name:
+        yield name
 
 
 @pytest.fixture(scope="module")
 def polaris(principal, schema):
     """Polaris added to Flowfile's catalog with a client id and secret, by user 1: ``(name, catalog id, schema id)``."""
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-    from flowfile_core.database.connection import get_db_context
-    from flowfile_core.database.models import CatalogNamespace
-    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
-
-    name = f"polaris_{uuid.uuid4().hex[:6]}"
-    body = ExternalCatalogCreate(
-        name=name, uri=fixtures.SIGNED_CATALOG_URI, warehouse=fixtures.SIGNED_WAREHOUSE,
-        sign_in="client_credentials", client_id=principal.client_id, client_secret=principal.client_secret,
-        scope=fixtures.SIGNED_SCOPE,
-    )
-    with get_db_context() as db:
-        CatalogService(SQLAlchemyCatalogRepository(db)).create_external_catalog(body, 1)
-        catalog = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).one()
-        schema_id = db.query(CatalogNamespace).filter_by(parent_id=catalog.id, name=schema).one().id
-        catalog_id = catalog.id
-    yield name, catalog_id, schema_id
-    with get_db_context() as db:
-        row = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).first()
-        if row is not None:
-            CatalogService(SQLAlchemyCatalogRepository(db)).delete_external_catalog(row.id)
-
-
-def _orders(rows: int, start: int = 0) -> pl.LazyFrame:
-    return (
-        pl.LazyFrame()
-        .select(pl.int_range(start, start + rows, dtype=pl.Int64).alias("id"))
-        .with_columns(grp=pl.col("id") % 10, val=pl.col("id").cast(pl.Float64) * 0.5,
-                      name=pl.format("name-{}", pl.col("id")))
-    )
+    with added_catalog(principal, schema) as added:
+        yield added
 
 
 @pytest.fixture(scope="module")
 def orders(signed, schema):
     """``orders`` in the module's namespace, 1000 rows another engine (PyIceberg) wrote."""
-    from shared.iceberg_utils import write_table
-
-    frame = _orders(1000)
-    made = signed.create_table(f"{schema}.orders",
-                               schema=frame.collect().to_arrow(compat_level=pl.CompatLevel.oldest()).schema)
-    write_table(made, frame, "append")
+    seed_orders(signed, f"{schema}.orders")
     return "orders"
 
 
@@ -398,7 +325,7 @@ def test_a_kernel_session_reads_an_outside_table_through_core_and_writes_one_aft
 
     keys = fixtures.key_values(storage_properties(signed.load_table(f"{schema}.{orders}")))
     token, _ = fixtures.fetch_token(principal)
-    values = _Values([principal.client_secret, principal.credential, token, *keys, fixtures.MINIO_ROOT_PASSWORD])
+    values = SecretValues([principal.client_secret, principal.credential, token, *keys, fixtures.MINIO_ROOT_PASSWORD])
     log = subprocess.run(["docker", "logs", f"flowfile-kernel-{kernel_id}"], capture_output=True, text=True)
     places = {
         "lookup answers": "\n".join(text for _, text in recorded["lookups"]),
@@ -407,7 +334,7 @@ def test_a_kernel_session_reads_an_outside_table_through_core_and_writes_one_aft
         "kernel log": log.stdout + log.stderr,
     }
     assert places["kernel log"].strip(), "the kernel's log was read"
-    found = {place: _secret_findings(text, values) for place, text in places.items()}
+    found = {place: secret_findings(text, values) for place, text in places.items()}
     assert found == {place: [] for place in places}
 
 
@@ -466,23 +393,13 @@ def page_orders(signed, polaris):
     catalog by a sync: ``catalog.schema``. Dropped with its table after the test."""
     from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
     from flowfile_core.database.connection import get_db_context
-    from shared.iceberg_utils import write_table
 
     name, catalog_id, _ = polaris
-    schema = f"page_{uuid.uuid4().hex[:8]}"
-    signed.create_namespace(schema)
-    frame = _orders(1000)
-    made = signed.create_table(f"{schema}.orders",
-                               schema=frame.collect().to_arrow(compat_level=pl.CompatLevel.oldest()).schema)
-    write_table(made, frame, "append")
-    with get_db_context() as db:
-        CatalogService(SQLAlchemyCatalogRepository(db)).sync_external_catalog(catalog_id, force=True)
-    yield f"{name}.{schema}"
-    for identifier in signed.list_tables(schema):
-        with contextlib.suppress(Exception):
-            signed.drop_table(identifier)
-    with contextlib.suppress(Exception):
-        signed.drop_namespace(schema)
+    with namespace_on(signed, "page") as schema:
+        seed_orders(signed, f"{schema}.orders")
+        with get_db_context() as db:
+            CatalogService(SQLAlchemyCatalogRepository(db)).sync_external_catalog(catalog_id, force=True)
+        yield f"{name}.{schema}"
 
 
 def test_a_catalog_page_cell_reads_an_outside_table_through_a_view_and_sees_another_engines_append(
@@ -523,10 +440,10 @@ def test_a_catalog_page_cell_reads_an_outside_table_through_a_view_and_sees_anot
 
     keys = fixtures.key_values(storage_properties(signed.load_table(f"{schema}.orders")))
     token, _ = fixtures.fetch_token(principal)
-    values = _Values([principal.client_secret, principal.credential, token, *keys, fixtures.MINIO_ROOT_PASSWORD])
+    values = SecretValues([principal.client_secret, principal.credential, token, *keys, fixtures.MINIO_ROOT_PASSWORD])
     log = subprocess.run(["docker", "logs", f"flowfile-kernel-{kernel_id}"], capture_output=True, text=True)
     places = {"cell results": json.dumps(results), "kernel log": log.stdout + log.stderr}
-    found = {place: _secret_findings(text, values) for place, text in places.items()}
+    found = {place: secret_findings(text, values) for place, text in places.items()}
     assert found == {place: [] for place in places}
 
 

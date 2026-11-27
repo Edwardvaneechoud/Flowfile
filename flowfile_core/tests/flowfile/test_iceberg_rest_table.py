@@ -21,20 +21,13 @@ from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.iceberg_utils import storage_properties
 from test_utils.iceberg_rest import fixtures
-from test_utils.s3.aws_profiles import isolate_aws
+from test_utils.iceberg_rest.pytest_fixtures import SecretValues as _Values
+from test_utils.iceberg_rest.pytest_fixtures import added_catalog, clean_aws, namespace_on, principal, seed_orders, signed
 from tests.flowfile.test_flowfile import add_manual_input, add_node_promise_on_type, create_graph, handle_run_info
 
 pytestmark = pytest.mark.iceberg_rest
 
 SECRET_KEY_NAMES = [b"s3.secret-access-key", b"s3.session-token"]
-
-
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    """No ambient AWS key or profile, and a closed endpoint for anything that falls back to the environment."""
-    aws = tmp_path / "aws"
-    aws.mkdir()
-    isolate_aws(monkeypatch, aws)
 
 
 @pytest.fixture(scope="module")
@@ -289,76 +282,18 @@ def test_a_rerun_reads_again_only_when_the_table_has_a_new_commit(
     assert graph.get_node(2).get_resulting_data().columns == ["id", "grp", "val", "name", "note"]
 
 
-class _Values(list):
-    """Secret values a test searches for; its ``repr`` holds none of them."""
-
-    def __repr__(self) -> str:
-        return f"<{len(self)} secret values>"
-
-
-@pytest.fixture(scope="module")
-def principal():
-    if not fixtures.signed_catalog_ready():
-        pytest.skip(fixtures.SIGNED_SKIP_REASON)
-    made = fixtures.new_principal()
-    yield made
-    fixtures.drop_principal(made.name)
-
-
-@pytest.fixture(scope="module")
-def signed(principal):
-    return fixtures.signed_catalog(principal)
-
-
 @pytest.fixture(scope="module")
 def signed_orders(signed):
     """A namespace on Polaris holding ``orders``, 1000 rows; ``(namespace, "namespace.orders")``."""
-    from shared.iceberg_utils import write_table
-
-    name = f"flow_{uuid.uuid4().hex[:8]}"
-    signed.create_namespace(name)
-    arrow = _orders(1).to_arrow(compat_level=pl.CompatLevel.oldest())
-    table = signed.create_table(f"{name}.orders", schema=arrow.schema)
-    write_table(table, _orders(1000).lazy(), "append")
-    yield name, f"{name}.orders"
-    for identifier in signed.list_tables(name):
-        with contextlib.suppress(Exception):
-            signed.drop_table(identifier)
-    with contextlib.suppress(Exception):
-        signed.drop_namespace(name)
-
-
-def _add_external(body: dict) -> str:
-    """Add a catalog kept elsewhere through the catalog service, as user 1; returns its name."""
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-    from flowfile_core.database.connection import get_db_context
-    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
-
-    with get_db_context() as db:
-        CatalogService(SQLAlchemyCatalogRepository(db)).create_external_catalog(ExternalCatalogCreate(**body), 1)
-    return body["name"]
-
-
-def _remove_external(name: str) -> None:
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-    from flowfile_core.database.connection import get_db_context
-    from flowfile_core.database.models import CatalogNamespace
-
-    with get_db_context() as db:
-        row = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).first()
-        if row is not None:
-            CatalogService(SQLAlchemyCatalogRepository(db)).delete_external_catalog(row.id)
+    with namespace_on(signed, "flow") as name:
+        seed_orders(signed, f"{name}.orders")
+        yield name, f"{name}.orders"
 
 
 @pytest.fixture(scope="module")
 def polaris(principal, signed_orders):
-    name = _add_external({
-        "name": f"polaris_{uuid.uuid4().hex[:6]}", "uri": fixtures.SIGNED_CATALOG_URI,
-        "warehouse": fixtures.SIGNED_WAREHOUSE, "sign_in": "client_credentials",
-        "client_id": principal.client_id, "client_secret": principal.client_secret, "scope": fixtures.SIGNED_SCOPE,
-    })
-    yield name
-    _remove_external(name)
+    with added_catalog(principal) as (name, _, _):
+        yield name
 
 
 def _named(catalog: str) -> cloud_ss.IcebergCatalogSettings:
@@ -471,17 +406,12 @@ def test_a_flow_with_a_pasted_token_that_ran_out_fails_with_the_sentence(princip
     _skip_when_tokens_live_long()
     _, orders = signed_orders
     token, lifetime = fixtures.fetch_token(principal)
-    name = _add_external({
-        "name": f"pasted_{uuid.uuid4().hex[:6]}", "uri": fixtures.SIGNED_CATALOG_URI,
-        "warehouse": fixtures.SIGNED_WAREHOUSE, "sign_in": "token", "token": token,
-    })
-    try:
+    pasted = {"sign_in": "token", "token": token, "client_id": None, "client_secret": None, "scope": None}
+    with added_catalog(principal, name=f"pasted_{uuid.uuid4().hex[:6]}", **pasted) as (name, _, _):
         graph = create_graph(execution_location="local")
         _add_named_reader(graph, orders, name)
         time.sleep(lifetime + 1)
         run = graph.run_graph()
-    finally:
-        _remove_external(name)
 
     (step,) = [step for step in run.node_step_result if step.node_id == 1]
     said = step.error or ""

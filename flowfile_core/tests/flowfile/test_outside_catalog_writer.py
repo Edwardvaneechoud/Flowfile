@@ -10,7 +10,6 @@ Every test that needs Polaris skips unless it runs: ``python -m test_utils.icebe
 with no AWS identity (``clean_aws``).
 """
 
-import contextlib
 import json
 import uuid
 
@@ -20,79 +19,26 @@ from fastapi.testclient import TestClient
 from flowfile_core.schemas import input_schema
 from shared.iceberg_utils import storage_properties
 from test_utils.iceberg_rest import fixtures
-from test_utils.s3.aws_profiles import isolate_aws
+from test_utils.iceberg_rest.pytest_fixtures import SecretValues as _Values
+from test_utils.iceberg_rest.pytest_fixtures import added_catalog, clean_aws, namespace_on, principal, signed
 from tests.flowfile.conftest import add_test_manual_input
 from tests.flowfile.test_flowfile import add_node_promise_on_type, create_graph, handle_run_info
 
 SECRET_KEY_NAMES = ["s3.secret-access-key", "s3.session-token"]
 
 
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    """No ambient AWS key or profile, and a closed endpoint for anything that falls back to the environment."""
-    aws = tmp_path / "aws"
-    aws.mkdir()
-    isolate_aws(monkeypatch, aws)
-
-
-class _Values(list):
-    """Secret values a test searches for; its ``repr`` holds none of them."""
-
-    def __repr__(self) -> str:
-        return f"<{len(self)} secret values>"
-
-
-@pytest.fixture(scope="module")
-def principal():
-    if not fixtures.signed_catalog_ready():
-        pytest.skip(fixtures.SIGNED_SKIP_REASON)
-    made = fixtures.new_principal()
-    yield made
-    fixtures.drop_principal(made.name)
-
-
-@pytest.fixture(scope="module")
-def signed(principal):
-    return fixtures.signed_catalog(principal)
-
-
 @pytest.fixture(scope="module")
 def schema(signed):
     """A namespace of this module's own on Polaris; dropped with its tables after the module."""
-    name = f"writer_{uuid.uuid4().hex[:8]}"
-    signed.create_namespace(name)
-    yield name
-    for identifier in signed.list_tables(name):
-        with contextlib.suppress(Exception):
-            signed.drop_table(identifier)
-    with contextlib.suppress(Exception):
-        signed.drop_namespace(name)
+    with namespace_on(signed, "writer") as name:
+        yield name
 
 
 @pytest.fixture(scope="module")
 def polaris(principal, schema):
     """Polaris added to Flowfile's catalog with a client id and secret, by user 1: ``(name, catalog id, schema id)``."""
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-    from flowfile_core.database.connection import get_db_context
-    from flowfile_core.database.models import CatalogNamespace
-    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
-
-    name = f"polaris_{uuid.uuid4().hex[:6]}"
-    body = ExternalCatalogCreate(
-        name=name, uri=fixtures.SIGNED_CATALOG_URI, warehouse=fixtures.SIGNED_WAREHOUSE,
-        sign_in="client_credentials", client_id=principal.client_id, client_secret=principal.client_secret,
-        scope=fixtures.SIGNED_SCOPE,
-    )
-    with get_db_context() as db:
-        CatalogService(SQLAlchemyCatalogRepository(db)).create_external_catalog(body, 1)
-        catalog = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).one()
-        schema_id = db.query(CatalogNamespace).filter_by(parent_id=catalog.id, name=schema).one().id
-        catalog_id = catalog.id
-    yield name, catalog_id, schema_id
-    with get_db_context() as db:
-        row = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).first()
-        if row is not None:
-            CatalogService(SQLAlchemyCatalogRepository(db)).delete_external_catalog(row.id)
+    with added_catalog(principal, schema) as added:
+        yield added
 
 
 def _rows(start: int, count: int) -> list[dict]:

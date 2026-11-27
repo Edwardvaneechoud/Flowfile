@@ -12,17 +12,9 @@ import pytest
 
 import flowfile_frame as ff
 from test_utils.iceberg_rest import fixtures
-from test_utils.s3.aws_profiles import isolate_aws
+from test_utils.iceberg_rest.pytest_fixtures import added_catalog, clean_aws, namespace_on, principal, signed
 
 CATALOG = {"catalog_uri": fixtures.CATALOG_URI, "catalog_warehouse": fixtures.WAREHOUSE}
-
-
-@pytest.fixture(autouse=True)
-def clean_aws(monkeypatch, tmp_path):
-    """No ambient AWS key or profile, and a closed endpoint for anything that falls back to the environment."""
-    aws = tmp_path / "aws"
-    aws.mkdir()
-    isolate_aws(monkeypatch, aws)
 
 
 @pytest.fixture(scope="module")
@@ -88,41 +80,16 @@ def test_a_named_catalog_takes_no_address_and_no_other_format():
 
 
 @pytest.fixture(scope="module")
-def polaris():
+def polaris(principal, signed):
     """Polaris added to Flowfile's catalog with a client id and secret, ``sales.orders`` 1000 rows on it."""
-    if not fixtures.signed_catalog_ready():
-        pytest.skip(fixtures.SIGNED_SKIP_REASON)
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-    from flowfile_core.database.connection import get_db_context
-    from flowfile_core.database.models import CatalogNamespace
-    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
     from shared.iceberg_utils import write_table
 
-    principal = fixtures.new_principal()
-    signed = fixtures.signed_catalog(principal)
-    schema = f"frame_{uuid.uuid4().hex[:8]}"
-    signed.create_namespace(schema)
-    frame = pl.LazyFrame({"id": list(range(1000))}).with_columns(grp=pl.col("id") % 10)
-    table = signed.create_table(f"{schema}.orders", schema=frame.collect().to_arrow().schema)
-    write_table(table, frame, "append")
-    name = f"polaris_{uuid.uuid4().hex[:6]}"
-    body = ExternalCatalogCreate(
-        name=name, uri=fixtures.SIGNED_CATALOG_URI, warehouse=fixtures.SIGNED_WAREHOUSE,
-        sign_in="client_credentials", client_id=principal.client_id, client_secret=principal.client_secret,
-        scope=fixtures.SIGNED_SCOPE,
-    )
-    with get_db_context() as db:
-        CatalogService(SQLAlchemyCatalogRepository(db)).create_external_catalog(body, 1)
-    yield name, schema, signed
-    with get_db_context() as db:
-        row = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).first()
-        CatalogService(SQLAlchemyCatalogRepository(db)).delete_external_catalog(row.id)
-    for identifier in signed.list_tables(schema):
-        with contextlib.suppress(Exception):
-            signed.drop_table(identifier)
-    with contextlib.suppress(Exception):
-        signed.drop_namespace(schema)
-    fixtures.drop_principal(principal.name)
+    with namespace_on(signed, "frame") as schema:
+        frame = pl.LazyFrame({"id": list(range(1000))}).with_columns(grp=pl.col("id") % 10)
+        table = signed.create_table(f"{schema}.orders", schema=frame.collect().to_arrow().schema)
+        write_table(table, frame, "append")
+        with added_catalog(principal) as (name, _, _):
+            yield name, schema, signed
 
 
 @pytest.mark.iceberg_rest

@@ -1,18 +1,15 @@
-"""A saved flow reads one Iceberg table and writes another on Flowfile's worker, with keys only the catalog hands out.
+"""Helpers for a saved flow that reads one Iceberg table and writes another on Flowfile's worker, with keys only the
+catalog hands out.
 
-Run ``python -m test_utils.iceberg_rest flow`` with the catalog running. It starts Flowfile's core and worker as two
-processes of their own (``test_utils.services``, which imports no Flowfile package), runs one flow twice and prints
-what it checked; ``tests/iceberg_e2e`` asserts the same. Only the processes it started are stopped.
+``tests/iceberg_e2e`` and the UI walk (``ui_check``) use them: they start Flowfile's core and worker as two processes of
+their own (``test_utils.services``, which imports no Flowfile package) and stop only the processes they started.
 """
 
 from __future__ import annotations
 
 import contextlib
-import io
-import json
 import re
 import subprocess
-import tempfile
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -231,84 +228,3 @@ def secret_shapes(text: str) -> list[str]:
 def _flag(passed: bool) -> str:
     return "" if passed else " -- NOT AS EXPECTED"
 
-
-def run_flow_demo() -> int:
-    if not fixtures.catalog_ready():
-        print(f"No Iceberg REST catalog answers at {fixtures.CATALOG_URI}.")
-        print("Start it with: python -m test_utils.iceberg_rest start")
-        return 1
-    seed_orders()
-    flow = iceberg_flow()
-    with tempfile.TemporaryDirectory() as scratch, contextlib.ExitStack() as stop_stack:
-        # the launcher prints which code each process loaded; useful in tests, noise in the demo
-        with contextlib.redirect_stdout(io.StringIO()):
-            stack = stop_stack.enter_context(running_stack(Path(scratch) / "stack"))
-        lake_sql = duck(Path(scratch) / "duckdb_extensions")
-        print(f"A flow on Flowfile's core (pid {stack.pids['core']}) and worker (pid {stack.pids['worker']}), two "
-              "processes, and a Lakekeeper catalog on a local MinIO.")
-        in_flow = leaks({"the flow": json.dumps(flow)}, handed_keys(ORDERS))
-        print(f"The flow names the catalog's address and two tables. It holds {'a' if in_flow else 'no'} storage key. "
-              "This catalog asks for no sign-in.\n")
-        import polars as pl
-
-        seeded = duck_count(lake_sql, ORDERS)
-        in_group_3 = orders_rows().filter(pl.col("grp") == 3).height
-        ok = seeded == 1000
-        print(f"1. Another tool (PyIceberg) made {ORDERS}: {seeded:,} rows{_flag(ok)}.")
-
-        flow_id = stack.import_flow(flow)
-        columns = stack.get("/node", flow_id=flow_id, node_id=1, get_data=False)["main_output"]["columns"]
-        shown = columns == COLUMNS
-        ok = ok and shown
-        print(f"2. The reader node shows the table's columns before anything runs: {', '.join(columns)}{_flag(shown)}.")
-
-        run = stack.run(flow_id)
-        ran = run["success"] and len([n for n in run["nodes"].values() if n["success"]]) == 3
-        first = duck_count(lake_sql, GRP3) if ran else 0
-        ok = ok and ran and first == in_group_3
-        print(f"3. Run 1: the worker read {ORDERS}, kept group 3 and created {GRP3}"
-              f"{'' if ran else f' -- FAILED: {services.failed_nodes(run)}'}.")
-        print(f"   Another engine (DuckDB), asking the catalog, sees {first:,} rows there ({in_group_3:,} of the "
-              f"{seeded:,} are in group 3){_flag(first == in_group_3)}.")
-
-        fixtures.attach_lake(lake_sql)
-        before = duck_count(lake_sql, ORDERS)
-        lake_sql.execute(f"DELETE FROM lake.{ORDERS} WHERE id % 100 = 3")
-        deleted = before - duck_count(lake_sql, ORDERS)
-        run = stack.run(flow_id)
-        second = duck_count(lake_sql, GRP3)
-        replaced = run["success"] and second == first - deleted
-        ok = ok and replaced
-        print(f"4. DuckDB deleted {deleted} of those rows from {ORDERS}. Run 2 replaced {GRP3}: DuckDB sees "
-              f"{second:,}{_flag(replaced)}.")
-        line = next((text for text in flow_log(stack, flow_id).splitlines() if FALLBACK in text), None)
-        if line is None:
-            ok = False
-            print("   The run's log does not say why the read was slower -- NOT FOUND.")
-        else:
-            print(f"   The run's log says: {line[line.index('Polars'):].strip()}")
-
-        keys = handed_keys(ORDERS, GRP3)
-        texts = {
-            "the saved flow": saved_flow(stack, flow_id),
-            "core's log": (stack.cwds["core"].parent / "core.log").read_text(),
-            "the worker's log": (stack.cwds["worker"].parent / "worker.log").read_text(),
-            "core's environment": process_environment(stack.pids["core"]),
-            "the worker's environment": process_environment(stack.pids["worker"]),
-        }
-        found = leaks(texts, keys)
-        shown = all("AWS_EC2_METADATA_DISABLED" in texts[f"{name}'s environment"] for name in ("core", "the worker"))
-        if not shown:
-            found.append("(the environments could not be read)")
-        ok = ok and not found and not in_flow and len(keys) == 6
-        print(f"5. Storage keys in the saved flow, in core's log, in the worker's log, in either process's environment: "
-              f"{', '.join(found) if found else 'none'}.")
-        lake_sql.close()
-    print("6. The same flow in Python:")
-    print(f'     orders = ff.read_from_cloud_storage("{ORDERS}", file_format="iceberg",')
-    print(f'                                         catalog_uri="{fixtures.CATALOG_URI}", '
-          f'catalog_warehouse="{fixtures.WAREHOUSE}")')
-    print(f'     ff.write_to_cloud_storage(orders.filter(ff.col("grp") == 3), "{GRP3}", file_format="iceberg",')
-    print(f'                               catalog_uri="{fixtures.CATALOG_URI}", '
-          f'catalog_warehouse="{fixtures.WAREHOUSE}")')
-    return 0 if ok else 1
