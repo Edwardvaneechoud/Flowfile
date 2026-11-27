@@ -116,7 +116,7 @@ This does not hide anything from people who can open the schema; they still see 
 
 ## Data rules
 
-A data rule says what every row of a column must hold. In the **Tables** tab (and under **Schema** on a table's own page), click **+** in a column's **Rules** cell, pick a kind and click **Add rule**. Remove a rule with the **✕** beside it in the same box.
+A data rule says what every row of a column must hold. In the **Tables** tab (and under **Schema** on a table's own page), click **Add rule** in a column's **Rules** cell (the pencil, once the column has rules), pick a kind and click **Add rule**. Remove a rule with the **✕** beside it in the same box.
 
 | Kind | Passes when |
 |---|---|
@@ -130,7 +130,7 @@ A data rule says what every row of a column must hold. In the **Tables** tab (an
 
 A row without a value passes every rule except **Not null**. A formula that answers nothing for a row (it reads an empty value) fails that row.
 
-A column's rules are one fact, reviewed like any other: a change waits in **Review** where review is on, and only accepted rules run. A rule that cannot work is refused when you add it, with the reason: a pattern that does not compile, a range on a text column, a formula that names a missing column or does not answer true or false.
+A column's rules are one fact, reviewed like any other: a change waits in **Review** where review is on, and only accepted rules run. A rule that cannot work is refused when you add it, with the reason: a pattern that does not compile, a range on a text column, a formula that names a missing column or does not answer true or false. A rule is refused only when that check proves it wrong. When the check cannot be made, for instance because the catalog holds no usable type for the column, the rule is saved with a notice and judged when it runs.
 
 ### Run the rules
 
