@@ -302,7 +302,8 @@ When you create a kernel from the UI, packages listed in the **Extra Python pack
 Each person on the server has a folder of their own, beside a **Shared** folder everyone uses. Open **Settings** (the gear icon in the left sidebar) and choose **Workspace → Workspace** to browse both.
 
 - Open folders, make a **New folder**, **Upload** files of any type (or drop them on the page) and **Download** a file.
-- **Delete** a file, or a folder with what is in it. The top folders themselves cannot be deleted.
+- An upload whose name a file in the folder already has asks first: **Replace** it, or **Keep both**.
+- **Delete** a file, or a folder with what is in it. The top folders themselves cannot be deleted, also where one is a link to another disk.
 - The flows folder is Flowfile's own: it is shown in **Shared**, and nothing is uploaded into it or deleted from it there.
 - Double-click a flow file, or select it and click **Open in designer**, to open it in the designer.
 

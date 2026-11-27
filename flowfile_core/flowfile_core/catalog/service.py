@@ -661,8 +661,9 @@ class CatalogService:
         return self._external.namespace_out(self._external.create(body, owner_id))
 
     def update_external_catalog(self, namespace_id: int, body: ExternalCatalogUpdate) -> NamespaceOut:
-        """The address and the sign-in are the owner's (or an administrator's), whatever the grants say."""
-        self._require_namespace_owner(namespace_id, "change how Flowfile reaches")
+        """Change a catalog kept elsewhere, whatever the grants say. On a server only an administrator may, as for
+        adding one: the server calls the new address. An owner who was an administrator once is not enough."""
+        self._require_admin_on_a_server("change how Flowfile reaches this catalog")
         return self._external.namespace_out(self._external.update(namespace_id, body))
 
     def delete_external_catalog(self, namespace_id: int) -> None:

@@ -298,6 +298,21 @@ class TestDataSourceNode:
         )
         assert REFUSED in _error(graph.run_graph(), 1)
 
+    def test_a_file_whose_name_is_a_pattern_that_reaches_another_persons_file_is_refused(
+        self, users, alice_file, tmp_path
+    ):
+        """The engine opens the file of that very name first and then scans the same text, which expands."""
+        theirs = alice_file.with_suffix(".parquet")
+        named = tmp_path / "workspace*" / theirs.parent.name / theirs.name
+        named.parent.mkdir(parents=True)
+        pl.DataFrame({"mine": [1]}).write_parquet(named)
+        graph = _graph()
+        graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"))
+        graph.add_datasource(
+            input_schema.NodeDatasource(flow_id=1, node_id=1, file_ref=str(named), user_id=users["bob"].id)
+        )
+        assert "other people's workspaces" in _error(graph.run_graph(), 1)
+
 
 class TestPatterns:
     def test_a_pattern_reaching_a_hidden_folder_is_refused(self, users, tmp_path):

@@ -4,6 +4,8 @@ on the catalog reaches its schemas (also ones a later sync adds), and neither Us
 The cases that add a catalog need Apache Polaris (``python -m test_utils.iceberg_rest start``) and skip without it.
 """
 
+import http.server
+import threading
 import uuid
 
 import pytest
@@ -46,6 +48,29 @@ def _body(principal, name: str) -> dict:
         "client_secret": principal.client_secret,
         "scope": fixtures.SIGNED_SCOPE,
     }
+
+
+@pytest.fixture
+def listener():
+    """An address on this machine that is no catalog, and the paths it was asked for."""
+    asked: list[str] = []
+
+    class _NoCatalog(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            asked.append(self.path)
+            self.send_response(500)
+            self.end_headers()
+
+        do_POST = do_GET
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _NoCatalog)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}", asked
+    server.shutdown()
+    server.server_close()
 
 
 @pytest.fixture
@@ -93,6 +118,44 @@ def test_only_an_administrator_adds_or_tests_a_catalog_kept_elsewhere(client_for
     added = alice.post("/catalog/external", json={**body, "name": "not_hers"})
 
     assert (tested.status_code, added.status_code) == (403, 403)
+
+
+def test_an_owner_who_is_no_longer_an_administrator_does_not_change_how_it_is_reached(users, client_for, listener):
+    """The owner added it as an administrator; since then the server calls no address they name."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace, ExternalCatalog
+
+    uri, asked = listener
+    stored = "http://127.0.0.1:9/api/catalog"
+    with get_db_context() as db:
+        catalog = CatalogNamespace(name="was_hers", level=0, owner_id=users["alice"].id, kept_elsewhere=True)
+        db.add(catalog)
+        db.commit()
+        db.add(ExternalCatalog(namespace_id=catalog.id, kind="iceberg_rest", uri=stored, sign_in="none"))
+        db.commit()
+        catalog_id = catalog.id
+    try:
+        alice, admin = client_for("alice"), client_for("admin")
+        moved = alice.put(f"/catalog/external/{catalog_id}", json={"uri": uri})
+        endpoint = {"sign_in": "client_credentials", "client_id": "a", "client_secret": "b", "token_endpoint": uri}
+        signed = alice.put(f"/catalog/external/{catalog_id}", json=endpoint)
+        hers = list(asked)
+        tried = admin.put(f"/catalog/external/{catalog_id}", json={"uri": uri})
+        described = admin.put(f"/catalog/external/{catalog_id}", json={"description": "The team's catalog"})
+        with get_db_context() as db:
+            kept = db.query(ExternalCatalog).filter_by(namespace_id=catalog_id).one()
+            uri_kept, sign_in_kept = kept.uri, kept.sign_in
+    finally:
+        with get_db_context() as db:
+            db.query(ExternalCatalog).filter_by(namespace_id=catalog_id).delete()
+            db.query(CatalogNamespace).filter_by(id=catalog_id).delete()
+            db.commit()
+
+    assert (moved.status_code, signed.status_code) == (403, 403)
+    assert hers == [], "nothing was asked at the address she named"
+    assert tried.status_code == 422 and asked, "an administrator's new address is tried"
+    assert described.status_code == 200, described.text
+    assert (uri_kept, sign_in_kept) == (stored, "none")
 
 
 @pytest.mark.iceberg_rest

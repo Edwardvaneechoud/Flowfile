@@ -153,6 +153,11 @@ def _app_folders() -> list[Path]:
     ]
 
 
+def _server_folders() -> list[Path]:
+    """The app's own folders and the server's storage, working and secure-storage folders, as configured."""
+    return [*_app_folders(), storage.base_directory, Path(os.getcwd()), _secure_storage_folder()]
+
+
 def shared_excluded() -> list[Path]:
     """The folders inside the shared folder that nobody reaches through it.
 
@@ -161,7 +166,7 @@ def shared_excluded() -> list[Path]:
     """
     root = os.path.realpath(shared_root())
     excluded = [Path(os.path.realpath(workspaces_root()))]
-    for folder in (*_app_folders(), storage.base_directory, Path(os.getcwd()), _secure_storage_folder()):
+    for folder in _server_folders():
         real = os.path.realpath(folder)
         if real != root and contained_path(root, real) is not None:
             excluded.append(Path(real))
@@ -261,6 +266,13 @@ class Places:
         if os.path.islink(match):
             return self.holds(os.path.realpath(match))
         return self.holds(os.path.join(real_folder, name))
+
+    def holds_read(self, path: str, real: str) -> bool:
+        """Whether all a reader takes for ``path``, which resolves to ``real``, lies in the folders: a pattern's
+        matches, or everything in a folder, since a reader expands both."""
+        if is_glob_pattern(path):
+            return all(self.holds_match(match) for match in _matches(path))
+        return not os.path.isdir(real) or self.holds_all_of(real)
 
     def holds_all_of(self, folder: str) -> bool:
         """Whether everything in ``folder``, a resolved folder in one of the folders, lies in them too."""
@@ -370,27 +382,34 @@ def browse_refusal(path: str) -> str:
     return f'"{path}" is not in {_places_named()}.'
 
 
-def _top_folders(user_id: int | None, places: Places) -> tuple[set[str], set[tuple[int, int]]]:
-    """The folders no delete removes, by text and by file identity: the browser's roots, the places' own folders,
-    the flows, uploads and outputs folders and the folder of workspaces."""
+def _identity(path: str | os.PathLike, follow: bool) -> tuple[int, int] | None:
+    """The file identity of ``path``, of a link itself unless ``follow``; ``None`` when nothing is there."""
+    try:
+        found = os.stat(path, follow_symlinks=follow)
+    except OSError:
+        return None
+    return found.st_dev, found.st_ino
+
+
+def is_top_folder(target: str, user_id: int | None) -> bool:
+    """Whether ``target`` is a folder no delete removes and no upload takes the place of, or a link that is one.
+
+    Those are the browser's roots, the places' own folders, the flows, uploads and outputs folders, the folder of
+    workspaces, the app's and the server's own folders, and every folder above one of them. An administrator may keep
+    any of them on another disk behind a link: the link is compared as itself, so it counts also while the disk is
+    away, and a person's own link to one of them does not. Compared by text and by file identity.
+    """
     folders = [root.path for root in browse_roots(user_id)]
-    folders += [
-        *places.roots,
-        storage.flows_directory,
-        storage.uploads_directory,
-        storage.outputs_directory,
-        workspaces_root(),
-    ]
-    named: set[str] = set()
-    identities: set[tuple[int, int]] = set()
-    for folder in folders:
-        named.update({os.path.realpath(folder), os.path.abspath(folder)})
-        try:
-            found = os.stat(folder)
-        except OSError:
-            continue
-        identities.add((found.st_dev, found.st_ino))
-    return named, identities
+    folders += [Path(root) for root in Places(user_id, "write").roots]
+    folders += [storage.flows_directory, storage.uploads_directory, storage.outputs_directory, workspaces_root()]
+    folders += _server_folders()
+    own = _identity(target, follow=False)
+    for folder in {above for kept in folders for above in (kept, *kept.parents)}:
+        if target in (os.path.realpath(folder), os.path.abspath(folder)):
+            return True
+        if own is not None and own in (_identity(folder, follow=True), _identity(folder, follow=False)):
+            return True
+    return False
 
 
 def deletable(path: str, user_id: int | None) -> tuple[str, bool]:
@@ -398,7 +417,7 @@ def deletable(path: str, user_id: int | None) -> tuple[str, bool]:
 
     A file or a folder in the person's workspace, the shared folder or the uploads and outputs folders, as a file
     node writes them; never one of those folders itself, nor a folder that holds anything outside them. A link is
-    removed where it is, so it never leads the delete to what it points at.
+    removed where it is, so it never leads the delete to what it points at; a top folder that is a link is kept.
 
     Raises:
         NotYours: with :func:`browse_refusal`, or a sentence naming a top folder.
@@ -410,16 +429,13 @@ def deletable(path: str, user_id: int | None) -> tuple[str, bool]:
         if Places(user_id, "browse").entry(path) is not None:
             raise NotYours(f'"{path}" is kept by Flowfile and cannot be deleted here.')
         raise NotYours(browse_refusal(path))
-    named, identities = _top_folders(user_id, places)
     if not os.path.lexists(target):
         raise FileNotFoundError(path)
+    if is_top_folder(target, user_id):
+        raise NotYours(f'"{path}" is a top folder and cannot be deleted.')
     link = os.path.islink(target)
-    if not link:
-        found = os.stat(target)
-        if target in named or (found.st_dev, found.st_ino) in identities:
-            raise NotYours(f'"{path}" is a top folder and cannot be deleted.')
-        if os.path.isdir(target) and not places.holds_all_of(target):
-            raise NotYours(f'"{path}" holds files outside {_places_named()}, so it cannot be deleted.')
+    if not link and os.path.isdir(target) and not places.holds_all_of(target):
+        raise NotYours(f'"{path}" holds files outside {_places_named()}, so it cannot be deleted.')
     return target, link
 
 
@@ -478,11 +494,13 @@ def checked_flow_path(path: str, user_id: int | None) -> str:
 
 def checked_data_path(path: str, user_id: int | None) -> str:
     """The resolved path a route reads a data file at; a 403 with :func:`browse_refusal` on a server when it is none
-    of ``user_id``'s places. Elsewhere ``validate_path_under_cwd``, as always."""
+    of ``user_id``'s places, or when a reader would take it for a pattern or a folder that reaches outside them.
+    Elsewhere ``validate_path_under_cwd``, as always."""
     if not is_server_mode():
         return validate_path_under_cwd(path)
-    place = data_place(path, user_id)
-    if place is None:
+    places = Places(user_id, "read")
+    place = places.place(path)
+    if place is None or not places.holds_read(place, place):
         raise HTTPException(403, browse_refusal(path))
     return place
 
@@ -524,11 +542,5 @@ def require_data_paths(
         real = places.place(path)
         if real is None:
             raise NotYours(refusal(named))
-        if not expand_glob:
-            continue
-        if is_glob_pattern(path):
-            inside = all(places.holds_match(match) for match in _matches(path))
-        else:
-            inside = not os.path.isdir(real) or places.holds_all_of(real)
-        if not inside:
+        if expand_glob and not places.holds_read(path, real):
             raise NotYours(pattern_refusal(named))

@@ -93,6 +93,18 @@ def _require_no_others_flow(file_location: Path, current_user, action: str) -> N
         raise HTTPException(403, str(err)) from None
 
 
+def _require_free_name(file_location: Path, replace: bool, current_user) -> None:
+    """Refuse an upload into a folder under the name of a folder there (400), or of a file there (409) unless
+    ``replace``; a link counts as what it is, so one that is a top folder keeps its place."""
+    name = file_location.name
+    if os.path.isdir(file_location) or workspace.is_top_folder(
+        str(file_location), current_user.id if current_user else None
+    ):
+        raise HTTPException(400, f'"{name}" is a folder here, so no file takes its name.')
+    if not replace and os.path.lexists(file_location):
+        raise HTTPException(409, f'"{name}" is already in this folder.')
+
+
 async def _write_upload(file: UploadFile, fd: int) -> int:
     """Stream the upload into an open fd, rejecting it the moment it grows past MAX_FILE_SIZE."""
     size = 0
@@ -136,6 +148,7 @@ async def upload_file(
     file: UploadFile = File(...),
     unique: bool = False,
     directory: str | None = None,
+    replace: bool = False,
     current_user=Depends(get_current_active_user),
 ) -> JSONResponse:
     """Upload a file to the user data uploads directory, or into ``directory``.
@@ -147,7 +160,8 @@ async def upload_file(
     ``directory`` is, on a server, a folder the person may put files in (``workspace.upload_folder``): a 403
     elsewhere and off a server, a 404 when it is no folder. A folder holds files of any type, so an upload into
     one takes any file; an upload into the uploads folder (the canvas drop) takes the data files of
-    ``ALLOWED_EXTENSIONS`` only. Without ``unique`` the file of a registered flow is replaced only by someone who
+    ``ALLOWED_EXTENSIONS`` only. In a ``directory`` a name that is taken is a 409 unless ``unique`` or ``replace``,
+    and a folder's name a 400. Without ``unique`` the file of a registered flow is replaced only by someone who
     manages that flow (403).
     """
     if not file.filename:
@@ -184,6 +198,8 @@ async def upload_file(
         # Stream into a hidden temp file and rename over the destination only on
         # success, so a rejected or failed upload never destroys an existing file.
         file_location = uploads_dir / safe_name
+        if directory is not None:
+            await asyncio.to_thread(_require_free_name, file_location, replace, current_user)
         await asyncio.to_thread(
             _require_no_others_flow, file_location, current_user, "replace another person's registered flow"
         )

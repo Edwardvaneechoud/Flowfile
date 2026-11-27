@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => {
     openFlow: vi.fn(),
     push: vi.fn(),
     confirm: vi.fn(),
+    upload: vi.fn(),
+    error: vi.fn(),
   };
 });
 
@@ -44,13 +46,13 @@ vi.mock("../../api/file.api", () => {
   };
 });
 vi.mock("../../services/axios.config", () => ({ default: { get: vi.fn(), post: vi.fn() } }));
-vi.mock("../../api/fileManager.api", () => ({ FileManagerApi: { uploadFile: vi.fn() } }));
+vi.mock("../../api/fileManager.api", () => ({ FileManagerApi: { uploadFile: mocks.upload } }));
 vi.mock("../../composables/useFlowOpener", () => ({
   useFlowOpener: () => ({ openFlow: mocks.openFlow }),
 }));
 vi.mock("vue-router", () => ({ useRouter: () => ({ push: mocks.push }) }));
 vi.mock("element-plus", () => ({
-  ElMessage: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+  ElMessage: { success: vi.fn(), error: mocks.error, warning: vi.fn() },
   ElMessageBox: { confirm: mocks.confirm, prompt: vi.fn() },
 }));
 
@@ -112,6 +114,8 @@ beforeEach(async () => {
   mocks.openFlow.mockReset().mockResolvedValue(12);
   mocks.push.mockReset();
   mocks.confirm.mockReset().mockResolvedValue("confirm");
+  mocks.upload.mockReset().mockResolvedValue({ filename: "", filepath: "", size: 1 });
+  mocks.error.mockReset();
   host = await mountIn(WorkspaceView, { pinia: createPinia(), stubs });
 });
 
@@ -164,5 +168,72 @@ describe("the Workspace page", () => {
 
     expect(mocks.confirm.mock.calls[0][0]).toBe('Delete "notes.txt"? This cannot be undone.');
     expect(mocks.deletePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("an upload on the Workspace page", () => {
+  const folder = "/data/user/workspaces/7";
+  const drop = async (...files: string[]) => {
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    const picked = files.map((name) => new File(["a"], name));
+    Object.assign(event, { dataTransfer: { files: picked, types: ["Files"] } });
+    host.querySelector(".grid-container")!.dispatchEvent(event);
+    await settle();
+    await settle();
+  };
+  const sent = () => mocks.upload.mock.calls.map(([file, , opts]) => [file.name, opts]);
+
+  it("sends a file whose name is free without asking", async () => {
+    await drop("new.csv");
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    expect(sent()).toEqual([["new.csv", { directory: folder }]]);
+  });
+
+  it("asks before it replaces a file, and replaces it on Replace", async () => {
+    await drop("notes.txt");
+    expect(mocks.confirm.mock.calls[0][0]).toBe('"notes.txt" is already in this folder.');
+    expect(mocks.confirm.mock.calls[0][2]).toMatchObject({
+      confirmButtonText: "Replace",
+      cancelButtonText: "Keep both",
+      distinguishCancelAndClose: true,
+    });
+    expect(sent()).toEqual([["notes.txt", { directory: folder, replace: true }]]);
+  });
+
+  it("keeps both on Keep both, and sends nothing when the question is closed", async () => {
+    mocks.confirm.mockRejectedValueOnce("cancel");
+    await drop("notes.txt");
+    expect(sent()).toEqual([["notes.txt", { directory: folder, unique: true }]]);
+
+    mocks.upload.mockClear();
+    mocks.confirm.mockRejectedValueOnce("close");
+    await drop("notes.txt", "other.csv");
+    expect(sent()).toEqual([["other.csv", { directory: folder }]]);
+    expect(mocks.error).not.toHaveBeenCalled();
+  });
+
+  it("asks when the server finds the name taken by a file the page does not list", async () => {
+    mocks.upload.mockRejectedValueOnce({
+      response: { status: 409, data: { detail: '".env" is already in this folder.' } },
+    });
+    await drop(".env");
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(sent()).toEqual([
+      [".env", { directory: folder }],
+      [".env", { directory: folder, replace: true }],
+    ]);
+    expect(mocks.error).not.toHaveBeenCalled();
+  });
+
+  it("says why when the server refuses it", async () => {
+    mocks.upload.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: { detail: '"churn" is a folder here, so no file takes its name.' },
+      },
+    });
+    await drop("churn");
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    expect(mocks.error.mock.calls[0][0]).toContain('"churn" is a folder here');
   });
 });

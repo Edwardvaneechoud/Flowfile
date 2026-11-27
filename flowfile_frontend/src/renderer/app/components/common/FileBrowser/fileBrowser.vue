@@ -378,6 +378,7 @@ import {
   offersBrowseRoots,
   pickableTypesNote,
   rootContaining,
+  takenNameQuestion,
   type BrowseRoot,
 } from "./workspaceRoots";
 
@@ -523,14 +524,51 @@ const isAtRoot = computed(
 const uploadInput = ref<HTMLInputElement | null>(null);
 const dropActive = ref(false);
 
+type TakenNameChoice = { replace: true } | { unique: true };
+
+/** Replace the file that has the name, or keep both; null when the question is closed. */
+const askAboutTakenName = async (name: string): Promise<TakenNameChoice | null> => {
+  try {
+    await ElMessageBox.confirm(takenNameQuestion(name), "Upload", {
+      confirmButtonText: "Replace",
+      cancelButtonText: "Keep both",
+      distinguishCancelAndClose: true,
+      type: "warning",
+    });
+    return { replace: true };
+  } catch (action) {
+    return action === "cancel" ? { unique: true } : null;
+  }
+};
+
+/** Upload one file into `folder`, asking first when its name is taken; false when the person left it out. */
+const uploadInto = async (folder: string, file: File): Promise<boolean> => {
+  const send = (choice?: TakenNameChoice) =>
+    FileManagerApi.uploadFile(file, undefined, { directory: folder, ...choice });
+  const listed =
+    currentPath.value === folder &&
+    files.value.some((entry) => !entry.is_directory && entry.name === file.name);
+  if (!listed) {
+    try {
+      await send();
+      return true;
+    } catch (err: any) {
+      if (err?.response?.status !== 409) throw err;
+    }
+  }
+  const choice = await askAboutTakenName(file.name);
+  if (!choice) return false;
+  await send(choice);
+  return true;
+};
+
 const uploadFiles = async (picked: File[]) => {
   if (!picked.length) return;
   const folder = currentPath.value;
   let uploaded = 0;
   for (const file of picked) {
     try {
-      await FileManagerApi.uploadFile(file, undefined, { directory: folder });
-      uploaded += 1;
+      if (await uploadInto(folder, file)) uploaded += 1;
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
       ElMessage.error(

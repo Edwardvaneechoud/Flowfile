@@ -4,6 +4,7 @@ The conftest puts the process in docker mode with ``tmp_path`` as the user data 
 """
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,25 @@ def _registered(client, path: Path) -> Path:
     )
     assert made.status_code == 200, made.text
     return path
+
+
+TOP_FOLDERS = ["workspaces", "flows", "uploads", "outputs", "catalog_tables", "notebooks", "projects"]
+# With the disk of the workspaces away no person has a folder, so no request gets as far as the check.
+LINKED_TOP_FOLDERS = [(name, True) for name in TOP_FOLDERS] + [(name, False) for name in TOP_FOLDERS[1:]]
+
+
+def _linked(shared: Path, name: str, there: bool) -> tuple[Path, Path]:
+    """A top folder an administrator keeps on another disk: a link in the shared folder, and what it points at."""
+    target = shared.parent / f"{shared.name}_disk" / name
+    target.mkdir(parents=True)
+    (target / "kept.txt").write_text("x")
+    link = shared / name
+    if link.is_dir():
+        shutil.rmtree(link)
+    link.symlink_to(target, target_is_directory=True)
+    if not there:
+        shutil.rmtree(target)
+    return link, target
 
 
 class TestRule:
@@ -260,7 +280,7 @@ class TestLetterCase:
         assert shouted.exists()
         planted = bob.post(
             "/file_manager/upload",
-            params={"directory": str(shouted.parent)},
+            params={"directory": str(shouted.parent), "replace": True},
             files={"file": (shouted.name, b"planted: true\n", "text/yaml")},
         )
         assert planted.status_code == 403, planted.text
@@ -634,11 +654,50 @@ class TestCatalogTableFromAFile:
         assert refused.status_code == 403, refused.text
         assert REFUSED in refused.json()["detail"]
 
+    @pytest.mark.parametrize("folder", ["workspace*", "w?rkspaces", "[w]orkspaces", "**"])
+    @pytest.mark.parametrize("beside", [False, True], ids=["no such folder", "a folder of that name"])
+    def test_a_table_is_not_made_from_a_pattern_that_reaches_another_persons_file(
+        self, alice, bob, tmp_path, folder, beside
+    ):
+        """The worker expands a pattern, also where a file of that very name lies in the shared folder."""
+        private = _alice_file(alice)
+        pattern = tmp_path / folder / private.parent.name / private.name
+        if beside:
+            pattern.parent.mkdir(parents=True)
+            pattern.write_text("a,b\n3,4\n")
+        refused = bob.post("/catalog/tables", json={"name": "taken", "file_path": str(pattern)})
+        assert refused.status_code == 403, refused.text
+        assert REFUSED in refused.json()["detail"]
+
+    def test_a_table_is_not_made_from_a_folder_with_a_link_to_another_persons_file(self, alice, bob):
+        private = _alice_file(alice)
+        folder = _workspace(bob) / "parts.parquet"
+        folder.mkdir()
+        (folder / "part.parquet").symlink_to(private)
+        refused = bob.post("/catalog/tables", json={"name": "taken", "file_path": str(folder)})
+        assert refused.status_code == 403, refused.text
+
+    def test_a_file_with_a_bracket_in_its_name_and_a_pattern_of_ones_own_are_taken(self, bob, users):
+        mine = _workspace(bob)
+        for name in ("report[1].csv", "report1.csv"):
+            (mine / name).write_text("a\n1\n")
+        for path in (mine / "report[1].csv", mine / "report*.csv"):
+            assert workspace.checked_data_path(str(path), users["bob"].id) == str(path)
+
 
 class TestUploadAndDownload:
-    def _upload(self, client, folder: Path, name: str = "customers.csv", body: bytes = b"id,amount\n1,10\n2,20\n"):
+    def _upload(
+        self,
+        client,
+        folder: Path,
+        name: str = "customers.csv",
+        body: bytes = b"id,amount\n1,10\n2,20\n",
+        **params,
+    ):
         return client.post(
-            "/file_manager/upload", params={"directory": str(folder)}, files={"file": (name, body, "text/csv")}
+            "/file_manager/upload",
+            params={"directory": str(folder), **params},
+            files={"file": (name, body, "text/csv")},
         )
 
     def test_a_csv_dropped_in_a_folder_is_read_by_a_flow_beside_it_and_its_result_downloaded(self, bob, users):
@@ -733,10 +792,43 @@ class TestUploadAndDownload:
     def test_another_persons_registered_flow_in_the_uploads_folder_is_not_replaced(self, alice, bob):
         flow = _registered(alice, storage.uploads_directory / "alices_flow.yaml")
         before = flow.read_bytes()
-        refused = self._upload(bob, flow.parent, name=flow.name, body=b"planted: true\n")
+        refused = self._upload(bob, flow.parent, name=flow.name, body=b"planted: true\n", replace=True)
         assert refused.status_code == 403, refused.text
         assert flow.read_bytes() == before
-        assert self._upload(alice, flow.parent, name=flow.name, body=before).status_code == 200, "it is hers to replace"
+        hers = self._upload(alice, flow.parent, name=flow.name, body=before, replace=True)
+        assert hers.status_code == 200, "it is hers to replace"
+
+    def test_a_file_already_in_the_folder_is_replaced_only_when_that_is_asked(self, bob):
+        mine = _workspace(bob)
+        (mine / "customers.csv").write_text("before\n")
+        taken = self._upload(bob, mine)
+        assert taken.status_code == 409, taken.text
+        assert taken.json()["detail"] == '"customers.csv" is already in this folder.'
+        assert (mine / "customers.csv").read_text() == "before\n"
+
+        beside = self._upload(bob, mine, body=b"beside\n", unique=True)
+        assert beside.status_code == 200 and beside.json()["filename"] == "customers (1).csv"
+        replaced = self._upload(bob, mine, body=b"after\n", replace=True)
+        assert replaced.status_code == 200, replaced.text
+        assert (mine / "customers.csv").read_text() == "after\n"
+        assert (mine / "customers (1).csv").read_text() == "beside\n"
+        assert not list(mine.glob(".*.part")), "no half upload is left behind"
+
+    def test_a_file_does_not_take_the_name_of_a_folder(self, bob):
+        mine = _workspace(bob)
+        (mine / "churn").mkdir()
+        for replace in (False, True):
+            refused = self._upload(bob, mine, name="churn", replace=replace)
+            assert refused.status_code == 400, refused.text
+            assert refused.json()["detail"] == '"churn" is a folder here, so no file takes its name.'
+        assert (mine / "churn").is_dir()
+
+    @pytest.mark.parametrize(("folder", "there"), LINKED_TOP_FOLDERS)
+    def test_a_file_does_not_take_the_place_of_a_linked_top_folder(self, bob, tmp_path, folder, there):
+        link, _ = _linked(tmp_path, folder, there)
+        refused = self._upload(bob, tmp_path, name=link.name, replace=True)
+        assert refused.status_code in (400, 403), refused.text
+        assert link.is_symlink()
 
     def test_the_canvas_drop_does_not_replace_another_persons_registered_flow(self, alice, bob):
         flow = _registered(alice, storage.uploads_directory / "alices_flow.json")
@@ -820,6 +912,40 @@ class TestDelete:
             assert "cannot be deleted" in refused.json()["detail"]
             assert root.is_dir()
         assert (_workspace(bob) / "keep.csv").exists()
+
+    @pytest.mark.parametrize(("folder", "there"), LINKED_TOP_FOLDERS)
+    def test_a_top_folder_that_is_a_link_is_refused(self, bob, tmp_path, folder, there):
+        link, target = _linked(tmp_path, folder, there)
+        for dry_run in (True, False):
+            refused = self._delete(bob, link, dry_run=dry_run)
+            assert refused.status_code == 403, (folder, refused.text)
+        assert link.is_symlink()
+        assert not there or (target / "kept.txt").exists()
+
+    def test_a_link_on_the_way_to_a_folder_of_the_app_is_refused(self, bob, tmp_path, monkeypatch):
+        (tmp_path.parent / f"{tmp_path.name}_disk" / "storage").mkdir(parents=True)
+        (tmp_path / "server").symlink_to(tmp_path.parent / f"{tmp_path.name}_disk", target_is_directory=True)
+        monkeypatch.setattr(storage, "_base_dir", tmp_path / "server" / "storage")
+        refused = self._delete(bob, tmp_path / "server")
+        assert refused.status_code == 403, refused.text
+        assert (tmp_path / "server").is_symlink()
+
+    def test_a_folder_that_holds_the_one_a_top_folder_links_to_is_refused(self, bob, tmp_path):
+        real = tmp_path / "disk" / "uploads"
+        real.mkdir(parents=True)
+        (real / "kept.csv").write_text("a\n1\n")
+        storage.uploads_directory.symlink_to(real, target_is_directory=True)
+        for folder in (real, real.parent, storage.uploads_directory):
+            refused = self._delete(bob, folder)
+            assert refused.status_code == 403, (folder, refused.text)
+        assert (real / "kept.csv").exists()
+
+    def test_a_link_to_a_top_folder_is_removed_and_the_folder_kept(self, bob):
+        storage.uploads_directory.mkdir(parents=True, exist_ok=True)
+        link = _workspace(bob) / "team_uploads"
+        link.symlink_to(storage.uploads_directory, target_is_directory=True)
+        assert self._delete(bob, link).status_code == 200
+        assert not os.path.lexists(link) and storage.uploads_directory.is_dir()
 
     def test_another_persons_registered_flow_is_not_deleted_nor_a_folder_that_holds_one(self, alice, bob):
         flow = _registered(alice, storage.uploads_directory / "team" / "alices_flow.yaml")

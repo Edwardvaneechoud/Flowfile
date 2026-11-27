@@ -352,9 +352,9 @@ In plain words:
 - The cloud storage nodes' own forms do not offer Iceberg; use Read from Catalog and Write to Catalog, or
   `ff.read_from_cloud_storage(..., file_format="iceberg", catalog="polaris")` from Python (see
   [An Iceberg table kept by a REST catalog](../../python-api/reference/reading-data.md#an-iceberg-table-kept-by-a-rest-catalog)).
-- On a multi-user server only an administrator adds, tests, edits or removes one. It is private until shared like
-  any catalog: Use lets a person see it, list its tables and read them in a flow; Manage also lets them write. Neither
-  changes the address or the sign-in.
+- On a multi-user server only an administrator adds, tests or edits one; its owner or an administrator removes it. It
+  is private until shared like any catalog: Use lets a person see it, list its tables and read them in a flow; Manage
+  also lets them write. Neither changes the address or the sign-in.
 - A project does not carry these catalogs: the address and the sign-in are this install's own.
 
 ---

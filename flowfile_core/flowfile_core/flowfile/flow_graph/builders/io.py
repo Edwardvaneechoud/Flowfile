@@ -282,7 +282,9 @@ def scan_directory_to_frame(
 def _datasource_engine(input_file: input_schema.NodeDatasource):
     """The data source node's data, or, where the person may not read its file, a function that fails with why."""
     try:
-        workspace.require_data_paths(workspace.running_person(input_file.user_id), input_file.file_ref)
+        workspace.require_data_paths(
+            workspace.running_person(input_file.user_id), input_file.file_ref, expand_glob=True
+        )
     except workspace.NotYours as refused:
         sentence = refused.shown
 

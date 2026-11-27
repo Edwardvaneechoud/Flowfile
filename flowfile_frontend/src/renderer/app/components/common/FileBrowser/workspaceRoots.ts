@@ -85,6 +85,11 @@ export function deleteQuestion(name: string, isDirectory: boolean, items: number
   return `Delete the folder "${name}" and the ${counted} in it? This cannot be undone.`;
 }
 
+/** What is said before an upload whose name a file in the folder already has. */
+export function takenNameQuestion(name: string): string {
+  return `"${name}" is already in this folder.`;
+}
+
 /** The line under the Workspace page's title. */
 export const WORKSPACE_PAGE_DESCRIPTION =
   "Your own files on this server, and the folder everyone shares.";
