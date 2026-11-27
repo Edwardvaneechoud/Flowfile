@@ -575,6 +575,7 @@ class CatalogService:
         stamped with its `.access`. A namespace is kept when it is visible
         (public/owned/granted) OR still has any visible child (context-only ancestor)."""
         visible_ns = self.access.visible_namespace_ids()
+        writable_ns = self.access.writable_namespace_ids()
         accessible = {
             t: self.access.accessible_ids(t)
             for t in ("flow", "catalog_table", "visualization", "global_artifact", "catalog_notebook")
@@ -618,6 +619,9 @@ class CatalogService:
             )
             node.children = [c for c in (_prune(child) for child in node.children) if c is not None]
             self._stamp_access([node], "catalog_namespace", details["catalog_namespace"])
+            # The rule of ``_require_manage("catalog_namespace")``: a public namespace grants writing, never managing.
+            node.can_manage = node.access is not None and (node.access.is_owner or node.access.access_level == "manage")
+            node.can_write = node.id in writable_ns
             has_items = bool(
                 node.flows or node.tables or node.visualizations or node.notebooks or node.artifacts or node.children
             )

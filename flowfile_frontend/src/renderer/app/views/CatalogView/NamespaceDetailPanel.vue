@@ -16,7 +16,7 @@
           {{ HUB_MANAGED_NOTE }}
         </p>
       </div>
-      <div v-if="!isHub && canManage(namespace)" class="header-actions">
+      <div v-if="!isHub && manages" class="header-actions">
         <button
           class="btn btn-danger btn-sm"
           data-testid="catalog-delete"
@@ -33,7 +33,7 @@
     <div class="section-header">
       <h3 class="section-title">Storage</h3>
       <button
-        v-if="!isHub && canChangeStorage(namespace)"
+        v-if="!isHub && changesStorage"
         class="btn btn-secondary btn-sm"
         data-testid="catalog-edit-storage"
         :disabled="!!storageLocked"
@@ -99,7 +99,7 @@
       <p v-else-if="!connection" class="storage-hint muted">
         Connection details unavailable — it may be owned by another user or no longer exist.
       </p>
-      <p v-if="storageLocked && canChangeStorage(namespace)" class="storage-hint muted">
+      <p v-if="storageLocked && changesStorage" class="storage-hint muted">
         {{ storageLocked }}
       </p>
     </template>
@@ -148,11 +148,20 @@ const catalogStore = useCatalogStore();
 // Storage is the owner's (or an admin's) to change, as core refuses a manage-grantee
 const { canManage, canManageGrants: canChangeStorage } = useResourceSharing();
 
+// A public catalog someone else owns is writable but not theirs to delete or re-store.
+const manages = computed(() => canManage(props.namespace) && props.namespace.can_manage !== false);
+const changesStorage = computed(
+  () => canChangeStorage(props.namespace) && props.namespace.can_manage !== false,
+);
 const isCloud = computed(() => !!props.namespace.storage_uri);
 const isHub = computed(() => isHubRow(props.namespace));
 // The semantic models of this machine's catalogs only; a hub's or an unusable one's are not here.
 const showsSemantic = computed(
-  () => props.namespace.level === 0 && !isHub.value && unavailableReason(props.namespace) === null,
+  () =>
+    props.namespace.level === 0 &&
+    !isHub.value &&
+    unavailableReason(props.namespace) === null &&
+    props.namespace.semantic_model_readable !== false,
 );
 const connection = ref<FullCloudStorageConnectionInterface | null>(null);
 const loadingConnection = ref(false);

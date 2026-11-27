@@ -16,10 +16,12 @@ vi.mock("../../api/catalog.api", () => ({ CatalogApi: { deleteNamespace: vi.fn()
 vi.mock("../CloudConnectionView/api", () => ({
   fetchCloudStorageConnectionsInterfaces: vi.fn().mockResolvedValue([]),
 }));
+const sharing = vi.hoisted(() => ({ owned: false }));
+
 vi.mock("../../composables/useResourceSharing", () => ({
   useResourceSharing: () => ({
-    canManage: () => false,
-    canManageGrants: () => false,
+    canManage: () => sharing.owned,
+    canManageGrants: () => sharing.owned,
     isShared: () => false,
     sharedLabel: () => "",
     sharedTitle: () => "",
@@ -57,5 +59,43 @@ describe("NamespaceDetailPanel", () => {
 
     await mount(catalog);
     expect(note()).toBeNull();
+  });
+
+  it("lists only the schemas with a model to open, and no section for a catalog without one", async () => {
+    const schema = (id: number, name: string, readable: boolean) =>
+      ns({ id, name, level: 1, parent_id: 1, semantic_model_readable: readable });
+    const section = () => host.querySelector('[data-testid="catalog-semantic-section"]');
+    const listed = () =>
+      Array.from(host.querySelectorAll('[data-testid="catalog-semantic-schema"] .name')).map(
+        (el) => el.textContent,
+      );
+
+    await mount({ ...catalog, children: [schema(2, "mine", true), schema(3, "public", false)] });
+    expect(section()).not.toBeNull();
+    expect(listed()).toEqual(["mine"]);
+
+    await mount({
+      ...catalog,
+      semantic_model_readable: false,
+      children: [schema(3, "public", false)],
+    });
+    expect(section()).toBeNull();
+  });
+
+  it("offers Delete and Edit storage only where the person manages the catalog", async () => {
+    sharing.owned = true;
+    const actions = () =>
+      ["catalog-delete", "catalog-edit-storage"].filter(
+        (id) => host.querySelector(`[data-testid="${id}"]`) !== null,
+      );
+    try {
+      await mount(catalog);
+      expect(actions()).toEqual(["catalog-delete", "catalog-edit-storage"]);
+
+      await mount({ ...catalog, can_manage: false });
+      expect(actions()).toEqual([]);
+    } finally {
+      sharing.owned = false;
+    }
   });
 });

@@ -176,7 +176,11 @@ function flattenNamespaceTree(
       // writable namespaces are offered as a publish target.
       if (
         !(parentLabel === "General" && SYSTEM_NAMESPACE_NAMES.has(node.name)) &&
-        isWritableNamespace({ access: effectiveAccess })
+        isWritableNamespace({
+          access: effectiveAccess,
+          source: node.source,
+          can_write: node.can_write,
+        })
       ) {
         out.push({
           id: node.id,

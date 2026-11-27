@@ -1476,6 +1476,7 @@ export interface CatalogNamespaceOut {
 
 export interface CatalogNamespaceTree extends CatalogNamespaceOut {
   children?: CatalogNamespaceTree[];
+  can_write?: boolean;
 }
 
 export interface NamespaceOption {

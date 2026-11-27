@@ -70,7 +70,11 @@ const isReadOnly = computed(
   () =>
     (props.writableOnly ?? false) &&
     props.node.level === 1 &&
-    !isWritableNamespace({ access: props.node.access ?? props.inheritedAccess }),
+    !isWritableNamespace({
+      access: props.node.access ?? props.inheritedAccess,
+      source: props.node.source,
+      can_write: props.node.can_write,
+    }),
 );
 // Only a schema is picked: a flow or table lives in a schema, and a catalog row opens and closes.
 const isSelectable = computed(() => props.node.level === 1 && !isReadOnly.value);

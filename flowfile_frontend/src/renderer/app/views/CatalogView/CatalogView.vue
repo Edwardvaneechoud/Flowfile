@@ -540,7 +540,7 @@
       resource-type="catalog_namespace"
       :resource-id="shareNamespace.id"
       :resource-name="shareNamespace.name"
-      :can-manage-grants="canManageGrants(shareNamespace)"
+      :can-manage-grants="canManageGrants(shareNamespace) && shareNamespace.can_manage !== false"
     />
 
     <!-- Right-click context menus for catalog tables and flows -->
