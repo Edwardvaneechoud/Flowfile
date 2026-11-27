@@ -1189,8 +1189,15 @@ onBeforeUnmount(() => {
   unregisterFlowHooks?.();
   for (const detach of schemaDetachers.values()) detach();
   schemaDetachers.clear();
-  if (!props.flowId) store.closeAllSessions();
   refreshSoon.cancel();
+});
+
+// A kernel that came back is a new process: ask which session its notebooks have there now.
+watch(kernelStatus, (now, before) => {
+  if (now.kind !== "ready" || !["stopped", "starting", "error"].includes(before.kind)) return;
+  for (const nb of store.openNotebooks) {
+    if (nb.kernelId === now.kernel.id) void refreshDataframeSchemas(ownerIdForNotebook(nb.tabId));
+  }
 });
 
 // A catalog panel never shows a flow's tab: fall back to a catalog tab when one was active.

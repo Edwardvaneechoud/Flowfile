@@ -154,8 +154,8 @@ export default {
           group: workspaceGroup,
         },
         {
-          name: "fileManager",
-          displayName: "menu.fileManager",
+          name: "workspace",
+          displayName: "menu.workspace",
           meta: { icon: "fa-solid fa-folder-open" },
           dockerOnly: true,
           group: workspaceGroup,

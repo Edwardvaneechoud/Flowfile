@@ -176,10 +176,16 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../pages/NodeDesigner.vue"),
       },
       {
+        name: "workspace",
+        path: "workspace",
+        component: () => import("../views/WorkspaceView/WorkspaceView.vue"),
+        meta: { dockerOnly: true },
+      },
+      {
+        // Legacy alias: the File Manager page became the Workspace page.
         name: "fileManager",
         path: "fileManager",
-        component: () => import("../views/FileManagerView/FileManagerView.vue"),
-        meta: { dockerOnly: true },
+        redirect: { name: "workspace" },
       },
       {
         name: "admin",

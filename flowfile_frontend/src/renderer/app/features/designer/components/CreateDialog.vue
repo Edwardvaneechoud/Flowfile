@@ -16,7 +16,7 @@
           @click="createMode = 'file'"
         >
           <i class="fa-solid fa-folder"></i>
-          <span>File System</span>
+          <span>{{ fileTabLabel(isMultiUser) }}</span>
         </button>
         <button
           v-if="ownCatalogOffered"
@@ -42,13 +42,16 @@
             @overwrite-file="handleCreateAtPath"
           />
           <catalog-register-row
-            v-if="ownCatalogOffered"
+            v-if="registersFromFileTab"
             ref="filePicker"
             v-model="registerInCatalog"
             v-model:namespace-id="selectedNamespaceId"
           />
-          <span v-else class="form-hint" data-testid="own-catalog-note">
+          <span v-else-if="!ownCatalogOffered" class="form-hint" data-testid="own-catalog-note">
             {{ OWN_CATALOG_NOT_OFFERED }}
+          </span>
+          <span v-else class="form-hint" data-testid="workspace-file-note">
+            {{ WORKSPACE_FILE_NOTE }}
           </span>
         </div>
 
@@ -107,6 +110,14 @@ import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 import CatalogRegisterRow from "./CatalogRegisterRow.vue";
 import { useOwnCatalog } from "../../../composables/useOwnCatalog";
 import { OWN_CATALOG_NOT_OFFERED } from "../../../views/CatalogView/hubRows";
+import {
+  fileTabLabel,
+  fileTabRegisters,
+  WORKSPACE_FILE_NOTE,
+} from "../../../components/common/FileBrowser/workspaceRoots";
+import { useMultiUser } from "../../../composables/useMultiUser";
+
+const { isMultiUser } = useMultiUser();
 
 const props = defineProps({
   visible: {
@@ -122,6 +133,9 @@ const isVisible = ref(props.visible);
 const createMode = ref<"file" | "catalog">("file");
 // Where this Flowfile's own catalog takes no flows a new flow is a file only.
 const { ownCatalogOffered, refreshOwnCatalog } = useOwnCatalog();
+const registersFromFileTab = computed(() =>
+  fileTabRegisters(isMultiUser.value, ownCatalogOffered.value),
+);
 
 // Catalog options
 const registerInCatalog = ref(true);
@@ -186,7 +200,7 @@ const handleCreateAtPath = async (flowPath: string) => {
   try {
     // Unchecking must actually opt out: a null namespace_id alone still routes
     // into auto-registration on the backend.
-    const registers = registerInCatalog.value && ownCatalogOffered.value;
+    const registers = registerInCatalog.value && registersFromFileTab.value;
     const namespaceId = registers ? selectedNamespaceId.value : null;
     const newFlowId = await createFlow(flowPath, null, namespaceId, registers);
     ElMessage.success("Flow created");

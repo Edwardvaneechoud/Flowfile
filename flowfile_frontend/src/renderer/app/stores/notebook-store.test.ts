@@ -201,6 +201,37 @@ describe("tab lifecycle", () => {
     expect(store.active!.persistedId).toBe(7);
     expect(store.active!.sessionFlowId).toBe(-7);
   });
+
+  it("a copy saved from a notebook keeps the session, and the original reopens in another", async () => {
+    const saved = (id: number) => ({
+      id,
+      name: `nb${id}`,
+      description: null,
+      namespace_id: null,
+      default_kernel_id: null,
+      cells: [],
+    });
+    mocks.nbGet.mockImplementation(async (id: number) => saved(id));
+    mocks.nbCreate.mockResolvedValue(saved(8));
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    await store.openNotebook(7);
+    await store.saveAs("copy", null);
+    expect([store.active!.persistedId, store.active!.sessionFlowId]).toEqual([8, -7]);
+
+    await store.openNotebook(7);
+    expect(store.active!.persistedId).toBe(7);
+    expect(store.active!.sessionFlowId).toBeLessThan(-1_500_000_000);
+    expect(new Set(store.openNotebooks.map((n) => n.sessionFlowId)).size).toBe(
+      store.openNotebooks.length,
+    );
+  });
+
+  it("the snapshot written to the browser carries each tab's session", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    expect(store._snapshot().openNotebooks[0].sessionFlowId).toBe(store.active!.sessionFlowId);
+  });
 });
 
 describe("editing flips dirty (active tab)", () => {
@@ -542,6 +573,17 @@ describe("execution identity and staleness", () => {
     expect(cells[0].output).not.toBeNull();
   });
 
+  it("a run in a new kernel namespace marks only the other results previous-session", async () => {
+    const { store, cells, owner } = withKernel(2);
+    const ran = (generation: string) => ({ ...okExecResult, namespace_generation: generation });
+    mocks.executeCell.mockResolvedValue(ran("g1"));
+    await store.runAll();
+    mocks.executeCell.mockResolvedValue(ran("g2"));
+    await store.runCell(cells[1].id);
+    expect(cellRuntime(owner, cells[0].id)!.staleReason).toBe("previous-session");
+    expect(cellRuntime(owner, cells[1].id)!.staleReason).toBeNull();
+  });
+
   it("a response arriving after a kernel switch never writes its output", async () => {
     let resolve!: (v: unknown) => void;
     mocks.executeCell.mockReturnValueOnce(new Promise((r) => (resolve = r)));
@@ -803,7 +845,7 @@ describe("persistence mapping + legacy coercion", () => {
     expect(store.active!.cells[1].renderedHtml).toBe("<md># md</md>");
   });
 
-  it("saveAs maps {cellType,code} to wire {type,source} and binds the tab", async () => {
+  it("saveAs maps {cellType,code} to wire {type,source}, binds the tab and keeps its session", async () => {
     mocks.nbCreate.mockResolvedValue({
       id: 99,
       name: "saved",
@@ -820,16 +862,17 @@ describe("persistence mapping + legacy coercion", () => {
     const store = useNotebookStore();
     store.ensureHydrated();
     store.setCellCode(store.active!.cells[0].id, "print(1)");
+    const session = store.active!.sessionFlowId;
     await store.saveAs("saved", null);
     const payload = mocks.nbCreate.mock.calls[0][0];
     expect(payload.cells[0]).toMatchObject({ type: "python", source: "print(1)" });
     expect(payload.cells[0]).not.toHaveProperty("cellType");
     expect(store.active!.persistedId).toBe(99);
-    expect(store.active!.sessionFlowId).toBe(-99);
+    expect(store.active!.sessionFlowId).toBe(session);
     expect(store.active!.dirty).toBe(false);
   });
 
-  it("a notebook saved in a hub schema keeps no kernel and runs in a namespace of its own", async () => {
+  it("a notebook saved in a hub schema keeps no kernel and stays in its session", async () => {
     const saved = {
       id: -501,
       name: "on the hub",
@@ -848,13 +891,14 @@ describe("persistence mapping + legacy coercion", () => {
     const store = useNotebookStore();
     store.ensureHydrated();
     store.setKernel("kernel-on-this-server");
+    const session = store.active!.sessionFlowId;
     await store.saveAs("on the hub", -11);
     expect(mocks.nbCreate.mock.calls[0][0]).toMatchObject({
       namespace_id: -11,
       default_kernel_id: null,
     });
     expect(store.active!.persistedId).toBe(-501);
-    expect(store.active!.sessionFlowId).toBe(-1_000_000_501);
+    expect(store.active!.sessionFlowId).toBe(session);
     expect(store.active!.kernelId).toBe("kernel-on-this-server");
     await store.save();
     expect(mocks.nbUpdate.mock.calls[0][0]).toBe(-501);

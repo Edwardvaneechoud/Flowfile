@@ -23,12 +23,16 @@
         <!-- Table mode -->
         <template v-if="mode === 'table'">
           <div class="catalog-field">
-            <label class="catalog-label">Catalog / Schema</label>
+            <div class="catalog-label-row">
+              <label class="catalog-label">Catalog / Schema</label>
+              <ExternalCatalogBadge v-if="outsideExternal" :external="outsideExternal" />
+            </div>
             <el-select
               v-model="selectedNamespaceId"
               size="small"
               placeholder="Select namespace"
               clearable
+              data-testid="catalog-reader-namespace"
               @change="handleNamespaceChange"
             >
               <el-option-group v-for="(group, i) in namespaceGroups" :key="i" :label="group.label">
@@ -49,7 +53,28 @@
             </p>
           </div>
 
-          <div class="catalog-field">
+          <div v-if="outsideSchema" class="catalog-field">
+            <label class="catalog-label">Table</label>
+            <el-select
+              v-model="selectedOutsideName"
+              size="small"
+              placeholder="Select table"
+              filterable
+              :loading="outsideListing?.loading ?? false"
+              data-testid="catalog-reader-outside-table"
+              @change="handleOutsideTableChange"
+            >
+              <el-option v-for="name in outsideTableNames" :key="name" :label="name" :value="name">
+                <i class="fa-solid fa-table catalog-option-icon"></i>
+                {{ name }}
+              </el-option>
+            </el-select>
+            <p v-if="outsideListing?.error" class="unavailable-reason">
+              {{ outsideListing.error }}
+            </p>
+          </div>
+
+          <div v-else class="catalog-field">
             <label class="catalog-label">Table</label>
             <el-select
               v-model="selectedTableId"
@@ -79,7 +104,27 @@
             </el-select>
           </div>
 
+          <template v-if="outsideSchema">
+            <div
+              v-if="asksForChanges"
+              class="catalog-field"
+              data-testid="catalog-reader-outside-changes"
+            >
+              <label class="catalog-label">Read</label>
+              <p class="unavailable-reason">{{ outsideNoChanges(outsideCatalogName) }}</p>
+            </div>
+            <div
+              v-if="asksForVersion"
+              class="catalog-field"
+              data-testid="catalog-reader-outside-version"
+            >
+              <label class="catalog-label">Version</label>
+              <p class="unavailable-reason">{{ outsideNoVersion(outsideCatalogName) }}</p>
+            </div>
+          </template>
+
           <ChangeFeedReadSection
+            v-else
             :model-value="cdcSettings"
             :node-id="nodeData.node_id"
             :status="cdcSectionStatus"
@@ -96,7 +141,7 @@
           />
 
           <div
-            v-if="!hubTarget && versionOptions.length > 0 && !selectedScd2"
+            v-if="!hubTarget && !outsideSchema && versionOptions.length > 0 && !selectedScd2"
             class="catalog-field"
           >
             <label class="catalog-label">Version</label>
@@ -159,6 +204,25 @@
               </p>
             </div>
           </CollapsibleSection>
+
+          <div
+            v-if="outsideSchema && selectedOutsideName"
+            class="table-meta"
+            data-testid="catalog-reader-outside-columns"
+          >
+            <p class="section-hint">
+              Columns as {{ outsideCatalogName }} describes the table; rows are read when the flow
+              runs.
+            </p>
+            <p v-if="outsideColumnsError" class="unavailable-reason">{{ outsideColumnsError }}</p>
+            <p v-else-if="outsideColumnsLoading" class="section-hint">Asking for its columns…</p>
+            <div v-else-if="outsideColumns.length > 0" class="schema-list">
+              <div v-for="col in outsideColumns" :key="col.name" class="schema-col">
+                <span class="col-name">{{ col.name }}</span>
+                <span class="col-type">{{ col.dtype }}</span>
+              </div>
+            </div>
+          </div>
 
           <div v-if="selectedTableMeta" class="table-meta">
             Latest stats:
@@ -236,14 +300,20 @@ import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useResourceSharing } from "../../../../../composables/useResourceSharing";
 import { CatalogApi } from "../../../../../api/catalog.api";
+import { useCatalogStore } from "../../../../../stores/catalog-store";
 import { isHubRow, isOffered, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
+import ExternalCatalogBadge from "../../../../../views/CatalogView/ExternalCatalogBadge.vue";
 import {
+  outsideNoChanges,
+  outsideNoVersion,
   isHubTarget,
   namespaceOptions,
   optionGroups,
+  outsideTableChoice,
   pickable,
   readerNamespaceChoice,
   selectedNamespaceRow,
+  selectedOutsideTable,
   selectedTableRow,
   tableChoice,
   tablePlace,
@@ -291,6 +361,8 @@ const cachedTableState = ref<{
   cdc: CdcReaderSettings;
   selectedTableMeta: CatalogTable | null;
   deltaVersions: DeltaVersionCommit[];
+  outsideName: string | null;
+  outsideColumns: OutsideColumn[];
 } | null>(null);
 const cachedSqlCode = ref<string | null>(null);
 
@@ -313,13 +385,104 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   },
 });
 
+const catalogStore = useCatalogStore();
 const catalogNamespaces = ref<NamespaceOption[]>([]);
+const namespaceTree = ref<NamespaceTree[]>([]);
 const allTables = ref<CatalogTable[]>([]);
 const selectedTableMeta = ref<CatalogTable | null>(null);
 const deltaVersions = ref<DeltaVersionCommit[]>([]);
 // The selects bind tree ids (negative for a hub row); the settings hold a local id or a hub table's qualified name.
 const selectedNamespaceId = ref<number | null>(null);
 const selectedTableId = ref<number | null>(null);
+
+// A schema kept by another catalog: its tables are listed live and its columns come from that catalog's description.
+type OutsideColumn = { name: string; dtype: string };
+const selectedOption = computed(
+  () => catalogNamespaces.value.find((ns) => ns.id === selectedNamespaceId.value) ?? null,
+);
+const outsideSchema = computed(() =>
+  selectedOption.value?.keptElsewhere ? selectedOption.value : null,
+);
+const outsideCatalogName = computed(() => outsideSchema.value?.full.split(".")[0] ?? "");
+const outsideExternal = computed(() => {
+  const catalogId = outsideSchema.value?.catalogId;
+  return namespaceTree.value.find((c) => c.id === catalogId)?.external ?? null;
+});
+// A saved node may still ask for what such a table refuses; the run fails with the same sentence.
+const asksForChanges = computed(() => (nodeData.value?.cdc_mode ?? "off") !== "off");
+const asksForVersion = computed(() => nodeData.value?.delta_version != null);
+const selectedOutsideName = ref<string | null>(null);
+const outsideColumns = ref<OutsideColumn[]>([]);
+const outsideColumnsLoading = ref(false);
+const outsideColumnsError = ref<string | null>(null);
+let outsideColumnsRequest = 0;
+
+const outsideListing = computed(() => {
+  const option = outsideSchema.value;
+  return option ? (catalogStore.externalTables[`${option.catalogId}:${option.id}`] ?? null) : null;
+});
+// A saved table the listing does not hold (yet) stays in view.
+const outsideTableNames = computed(() => {
+  const names = (outsideListing.value?.tables ?? []).map((t) => t.name);
+  const saved = selectedOutsideName.value;
+  return saved && !names.includes(saved) ? [saved, ...names] : names;
+});
+
+function loadOutsideTables(option: NamespaceOption) {
+  const key = `${option.catalogId}:${option.id}`;
+  if (catalogStore.externalTables[key]?.loading) return;
+  if (
+    catalogStore.externalTables[key] &&
+    !catalogStore.externalTablesStale(option.catalogId, option.id)
+  )
+    return;
+  void catalogStore.loadExternalTables(option.catalogId, option.id);
+}
+
+async function loadOutsideColumns(option: NamespaceOption, name: string) {
+  const token = ++outsideColumnsRequest;
+  outsideColumns.value = [];
+  outsideColumnsError.value = null;
+  outsideColumnsLoading.value = true;
+  try {
+    const detail = await CatalogApi.getExternalTable(option.catalogId, option.id, name);
+    if (token !== outsideColumnsRequest) return;
+    outsideColumns.value = detail.columns;
+  } catch (e: any) {
+    if (token !== outsideColumnsRequest) return;
+    const detail = e?.response?.data?.detail;
+    outsideColumnsError.value =
+      typeof detail === "string" ? detail : "The catalog did not describe this table";
+  } finally {
+    if (token === outsideColumnsRequest) outsideColumnsLoading.value = false;
+  }
+}
+
+function clearOutsideTable() {
+  outsideColumnsRequest++;
+  selectedOutsideName.value = null;
+  outsideColumns.value = [];
+  outsideColumnsError.value = null;
+  outsideColumnsLoading.value = false;
+}
+
+function handleOutsideTableChange(name: string | null) {
+  const option = outsideSchema.value;
+  if (!nodeData.value || !option) return;
+  nodeData.value.delta_version = null;
+  nodeData.value.scd2_view = null;
+  nodeData.value.scd2_as_of = null;
+  resetCdcSettings();
+  deltaVersions.value = [];
+  selectedTableMeta.value = null;
+  if (name) {
+    Object.assign(nodeData.value, outsideTableChoice(option, name));
+    void loadOutsideColumns(option, name);
+  } else {
+    Object.assign(nodeData.value, tableChoice(null));
+    clearOutsideTable();
+  }
+}
 
 // SQL reads local tables only.
 const localTables = computed(() => withoutHubRows(allTables.value));
@@ -569,6 +732,8 @@ function switchMode(newMode: "table" | "sql") {
       cdc: currentCdcSettings(),
       selectedTableMeta: selectedTableMeta.value,
       deltaVersions: [...deltaVersions.value],
+      outsideName: selectedOutsideName.value,
+      outsideColumns: [...outsideColumns.value],
     };
     Object.assign(nodeData.value, tableChoice(null), { source: "local" });
     selectedTableId.value = null;
@@ -578,6 +743,7 @@ function switchMode(newMode: "table" | "sql") {
     resetCdcSettings();
     selectedTableMeta.value = null;
     deltaVersions.value = [];
+    clearOutsideTable();
 
     if (cachedSqlCode.value != null) {
       sqlCode.value = cachedSqlCode.value;
@@ -602,6 +768,8 @@ function switchMode(newMode: "table" | "sql") {
       applyCdcSettings(cachedTableState.value.cdc);
       selectedTableMeta.value = cachedTableState.value.selectedTableMeta;
       deltaVersions.value = cachedTableState.value.deltaVersions;
+      selectedOutsideName.value = cachedTableState.value.outsideName;
+      outsideColumns.value = cachedTableState.value.outsideColumns;
       if (nodeData.value.cdc_mode === "since_last_run") void loadCdcStatus();
     }
   }
@@ -622,8 +790,10 @@ function formatNumber(n: number | null): string {
 
 function handleNamespaceChange(id: number | null) {
   selectedTableId.value = null;
+  clearOutsideTable();
+  const option = catalogNamespaces.value.find((ns) => ns.id === id) ?? null;
+  if (option?.keptElsewhere) loadOutsideTables(option);
   if (nodeData.value) {
-    const option = catalogNamespaces.value.find((ns) => ns.id === id) ?? null;
     Object.assign(nodeData.value, readerNamespaceChoice(option), tableChoice(null));
     nodeData.value.delta_version = null;
     nodeData.value.scd2_view = null;
@@ -686,10 +856,14 @@ let catalogLoadPromise: Promise<void> | null = null;
 async function loadCatalogData() {
   try {
     const tree = await CatalogApi.getNamespaceTree();
+    namespaceTree.value = tree;
     catalogNamespaces.value = namespaceOptions(tree, true);
     unusableNamespaces.value = unusableNamespaceIds(tree);
+    const outsideIds = new Set(
+      catalogNamespaces.value.filter((o) => o.keptElsewhere).map((o) => o.id),
+    );
     allTables.value = collectTablesFromTree(tree.filter(isOffered)).filter(
-      (t) => t.file_exists || t.table_type === "virtual",
+      (t) => (t.file_exists || t.table_type === "virtual") && !outsideIds.has(t.namespace_id ?? 0),
     );
   } catch {
     // Catalog not available
@@ -760,6 +934,18 @@ async function loadNodeData(nodeId: number) {
   if (catalogLoadPromise) await catalogLoadPromise;
 
   if (!nodeData.value) return;
+  clearOutsideTable();
+  const outside = selectedOutsideTable(nodeData.value, catalogNamespaces.value);
+  if (outside) {
+    selectedNamespaceId.value = outside.option.id;
+    selectedTableId.value = null;
+    selectedOutsideName.value = outside.name;
+    if (mode.value === "table") {
+      loadOutsideTables(outside.option);
+      await loadOutsideColumns(outside.option, outside.name);
+    }
+    return;
+  }
   // A row the tree no longer lists keeps the saved local id in view, as before.
   const namespaceRow = selectedNamespaceRow(nodeData.value, catalogNamespaces.value);
   selectedNamespaceId.value = namespaceRow ? namespaceRow.id : nodeData.value.catalog_namespace_id;
@@ -849,6 +1035,11 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.catalog-label-row {
+  display: flex;
+  align-items: center;
 }
 
 .catalog-label {

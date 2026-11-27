@@ -18,6 +18,7 @@ from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, U
 from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.hub_client import session as hub_session
 from shared import server_extension
 
@@ -293,6 +294,11 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
             db_models.ResourceGrant.resource_type == resource_type,
             db_models.ResourceGrant.resource_id.in_(resource_ids),
         ).delete(synchronize_session=False)
+        if spec.model is db_models.Secret:
+            # A catalog kept elsewhere signed in with one keeps its row; it is entered again, never another's id.
+            db.query(db_models.ExternalCatalog).filter(db_models.ExternalCatalog.secret_id.in_(resource_ids)).update(
+                {db_models.ExternalCatalog.secret_id: None}, synchronize_session=False
+            )
         db.query(spec.model).filter(spec.model.id.in_(resource_ids)).delete(synchronize_session=False)
     sharing.delete_memberships_for_user(db, user_id)
 
@@ -355,7 +361,16 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
     db.query(db_models.FlowSchedule).filter_by(owner_id=user_id).delete(synchronize_session=False)
 
     db.delete(user)
-    db.commit()
+    try:
+        # A later account given the same id starts with an empty workspace.
+        with workspace.retiring(user_id):
+            db.commit()
+    except OSError as failed:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"The account's workspace could not be set aside, so the account is kept: {failed}",
+        ) from failed
     invalidate_user_cache(user.username)
 
     return {"message": f"User '{user.username}' deleted successfully"}

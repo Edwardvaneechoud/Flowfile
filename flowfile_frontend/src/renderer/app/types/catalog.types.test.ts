@@ -87,6 +87,17 @@ describe("filterSelectableNamespaces", () => {
   });
 });
 
+describe("filterSelectableNamespaces with a catalog kept elsewhere", () => {
+  it("leaves it out, so no picker that saves offers its schemas", () => {
+    const polaris = {
+      ...ns(30, "polaris", [{ ...ns(31, "sales"), kept_elsewhere: true }]),
+      kept_elsewhere: true,
+    };
+    const filtered = filterSelectableNamespaces([...withHub, polaris]);
+    expect(filtered.map((n) => n.id)).toEqual([1, 4]);
+  });
+});
+
 describe("findDefaultSaveNamespace with a hub connected", () => {
   it("still answers the local General > Local Flows", () => {
     expect(findDefaultSaveNamespace(withHub)?.id).toBe(3);

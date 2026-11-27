@@ -16,7 +16,7 @@ import polars as pl
 from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
-from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
+from flowfile_core.catalog.constants import KEPT_ELSEWHERE_FORMAT, QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import get_live_delta_version, is_delta_table
 from flowfile_core.catalog.exceptions import (
     CatalogError,
@@ -28,6 +28,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.services._resolve import resolve_or_log
+from flowfile_core.catalog.services.external_catalogs import snapshot_scan
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
@@ -73,9 +74,34 @@ MIXED_STORAGE = (
 )
 
 
+_CHILD_FAILED = "resolve_virtual_table child failed: "
+_URL_RE = re.compile(r"(https?://\S+)")
+
+
+def _worker_refusal(error: RuntimeError) -> str | None:
+    """The sentence a worker's child answered a snapshot it could not write with, out of
+    ``trigger_resolve_virtual_table``'s error (``Worker resolve_virtual_table failed: {"detail": "resolve_virtual_table
+    child failed: <sentence>"}``), its paths scrubbed and its addresses kept; ``None`` for any other failure (a killed
+    child, a refused token, a proxy's page), which is no refusal."""
+    text = str(error).split("failed: ", 1)[-1]
+    try:
+        detail = json.loads(text).get("detail")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(detail, str) or not detail.startswith(_CHILD_FAILED):
+        return None
+    return _scrub_paths_not_urls(detail.removeprefix(_CHILD_FAILED))
+
+
 def _scrub_abs_paths(text: str) -> str:
     """Replace absolute filesystem paths in error text with their basename so callers don't learn server layout."""
     return _ABS_PATH_RE.sub(lambda m: m.group(0).rsplit("/", 1)[-1], text)
+
+
+def _scrub_paths_not_urls(text: str) -> str:
+    """``_scrub_abs_paths`` outside the ``http(s)://`` addresses in ``text``, so a catalog's address stays whole."""
+    pieces = _URL_RE.split(text)
+    return "".join(piece if index % 2 else _scrub_abs_paths(piece) for index, piece in enumerate(pieces))
 
 
 def scan_object_storage_table(
@@ -568,7 +594,9 @@ class VirtualTableService:
     def materialize_virtual_table(self, table_id: int, user_id: int | None = None) -> CatalogTableMaterializeResult:
         """Resolve a virtual table and have the worker materialise it to a kernel-readable IPC file. A physical
         table on object storage, this catalog's or a remote one's, is written the same way from a scan with its
-        storage target: a kernel holds no credential for it.
+        storage target: a kernel holds no credential for it. So is a table a catalog kept elsewhere keeps, from
+        ``external_catalogs.snapshot_scan``, whose keys the worker asks that catalog for; what the worker is refused
+        there is a ``ValueError`` with its sentence.
 
         Every call rebuilds the snapshot: a serialised plan records table paths,
         not data, so its sha256 stays constant when referenced data changes.
@@ -577,11 +605,14 @@ class VirtualTableService:
         """
         table = table_row(self.repo, table_id, user_id)
         on_storage = bool(table.table_type != "virtual" and table.file_path and _is_cloud_uri(table.file_path))
-        if getattr(table, "table_type", "physical") != "virtual" and not on_storage:
+        kept_elsewhere = getattr(table, "storage_format", None) == KEPT_ELSEWHERE_FORMAT
+        if getattr(table, "table_type", "physical") != "virtual" and not (on_storage or kept_elsewhere):
             raise NotAVirtualTableError(table_id=table_id)
 
         try:
-            if on_storage:
+            if kept_elsewhere:
+                plan_bytes = snapshot_scan(self.repo._db, table, user_id).serialize()
+            elif on_storage:
                 [target] = row_targets([table], user_id, "notebook")
                 plan_bytes = scan_object_storage_table(table, target, user_id, table.name).serialize()
             else:
@@ -593,12 +624,18 @@ class VirtualTableService:
             raise ValueError(f"Could not resolve virtual table '{table.name}': {_scrub_abs_paths(str(e))}") from e
 
         # A scan's encrypted credential differs on every build, so a table on object storage names its own file.
-        key = hashlib.sha256(f"{table_id}:{user_id}".encode() if on_storage else plan_bytes).hexdigest()
+        named = on_storage or kept_elsewhere
+        key = hashlib.sha256(f"{table_id}:{user_id}".encode() if named else plan_bytes).hexdigest()
         try:
             result = trigger_resolve_virtual_table(
                 table_id, plan_bytes, key, target="kernel_shared", worker_url=registry.worker_url()
             )
-        except (RequestException, RuntimeError, ComputeError) as e:
+        except (RequestException, ComputeError) as e:
+            raise WorkerUnavailableError(_scrub_abs_paths(str(e))) from e
+        except RuntimeError as e:
+            refusal = _worker_refusal(e) if kept_elsewhere else None
+            if refusal is not None:
+                raise ValueError(refusal) from None
             raise WorkerUnavailableError(_scrub_abs_paths(str(e))) from e
         ipc_path = validate_catalog_path(result["ipc_path"], storage.shared_virtual_results_directory)
         return CatalogTableMaterializeResult(

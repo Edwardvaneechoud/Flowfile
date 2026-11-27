@@ -236,6 +236,129 @@ Use the **Catalog Reader** input node to read a catalog table (physical or virtu
 
 ---
 
+## A catalog from elsewhere
+
+Give Flowfile the address of the Iceberg catalog your company already runs and a sign-in, and its schemas and tables
+show up in Flowfile's catalog beside your own: nothing is copied, nobody types a storage key, and what you see is what
+the other catalog holds right now.
+
+Such a catalog carries a green **Iceberg REST** badge; clicking it shows what a catalog from elsewhere is and its
+limits.
+
+**New → Add a catalog from elsewhere** opens the form:
+
+| Field | What to enter |
+|---|---|
+| **Name** | How Flowfile names the catalog, in the tree and in a flow (`polaris`). No dot. |
+| **Address** | The catalog's Iceberg REST address, such as `https://…/api/catalog`. |
+| **Warehouse** | The catalog's warehouse (Polaris calls it the catalog's name). |
+| **Sign in with** | *No sign-in*, *A token* (a bearer token you paste), or *A client id and secret*. |
+| **Scope** (under More) | Polaris: `PRINCIPAL_ROLE:ALL`. |
+| **Token endpoint** (under More) | Empty: the catalog's own (`<address>/v1/oauth/tokens`). |
+
+**Test** asks the catalog for its namespaces with that sign-in and says in one sentence what happened: "Signed in. 2
+schemas.", or why not (the catalog asks for a sign-in, refused the client id and secret, has no such warehouse, or
+nothing answers at the address). **Add catalog** tests again, stores the sign-in as one secret of yours, encrypted, and
+brings the catalog's schemas in. The secret is never shown again and never sent to the browser; editing the catalog
+keeps it unless you type a new one, and changing the address, the token endpoint or the kind of sign-in asks for it
+again.
+
+A token is not renewed: a flow that runs longer than the token lives fails, and says so. A client id and secret is
+renewed during a run, so use it for anything that runs on a schedule.
+
+**Schemas are kept in line.** The catalog's top-level namespaces are its schemas in Flowfile. Opening the catalog in
+the tree, or its panel, brings them in line (at most once every half minute); **Refresh** does it now. A schema the
+other catalog added appears; one it dropped is marked *gone*: it shows only under **Show unavailable**, and you can
+remove it. A schema that comes back is the same schema, with the same shares. A catalog that cannot be reached keeps
+the schemas it had, and its panel says why. Namespaces nested inside another, and names with a dot, are not shown;
+the panel counts them.
+
+**Tables are listed live.** Opening a schema asks the other catalog for its tables and shows them as that catalog
+lists them now. The list is kept a minute; the schema's Tables section says when it was listed ("listed 14:05"), and
+the ↻ beside that time lists them again at once. The ↻ on the catalog's own row, always visible, brings its schemas in
+line now.
+
+### Using its tables in a flow
+
+A table kept elsewhere is read and written with the ordinary catalog nodes:
+
+- [Read from Catalog](../nodes/input.md#a-table-kept-by-another-catalog) offers the catalog's schemas beside your own.
+  Picking a table shows its columns at once, before anything runs.
+- [Write to Catalog](../nodes/output.md#a-table-kept-by-another-catalog) offers the same schemas to someone who may
+  write them, with **Overwrite** and **Append**. The table is created when it does not exist yet.
+
+In Python, the same two calls as for any catalog table, with the schema named `catalog.schema`:
+
+```python
+orders = ff.read_catalog_table("orders", namespace_full_name="polaris.sales")
+ff.write_catalog_table(orders.filter(ff.col("grp") == 3), "orders_grp3", namespace_full_name="polaris.sales")
+```
+
+Each run, the process that reads or writes asks the other catalog for a temporary storage key for that one table,
+with the stored sign-in. Nobody types a storage key, and none is saved with the flow. Flows, notebooks and registered
+tables are not saved into such a catalog's schemas: the pickers that save those leave it out.
+
+### A table's panel
+
+Click a table under the schema to see what the other catalog says about it:
+
+- its columns, as Flowfile types;
+- its Iceberg format version, its location and its partition columns;
+- when it last changed: the time of the last commit, and how many snapshots the table keeps (an Append from
+  Flowfile adds one; an Overwrite of a table that holds rows adds two, a delete and an append, and of an empty or new
+  table one);
+- **Read by**: the saved flows that read it, and **Written by**: the flow that last wrote it;
+- two Python lines, ready to copy: an import, and a line that reads the table into `frame`:
+
+```python
+import flowfile as ff
+frame = ff.read_catalog_table("orders", namespace_full_name="polaris.sales")
+```
+
+The panel shows no row count, on purpose. Iceberg keeps a count in each snapshot's summary, but that count is wrong
+once rows have been deleted, and Flowfile would rather show none than a wrong one. Rows are read when a flow runs.
+
+In the catalog's [notebook](notebooks.md#a-table-kept-by-another-catalog) a cell reads such a table with these two
+lines; `flowfile_ctx.read_catalog_table("polaris.sales.orders")` reads the same rows. Each run of the cell reads the
+table as it is now, as a snapshot of the whole table, so a very large table is better read in a flow. On a shared
+server such a table is read in a flow, not in this notebook. Such a table is written by a flow, with a Write to
+Catalog node.
+
+### What such a table does not have
+
+A table kept by another catalog is that catalog's to look after, so some of what a Flowfile table has is not offered:
+
+- no [change tracking](change-tracking.md): a flow reads the whole table, never only what changed;
+- no versions and no time travel: a flow reads the table as it is now;
+- no optimise or vacuum: the other catalog looks after the table's files;
+- no [table trigger](schedules.md#table-trigger): give the flow an interval or cron schedule instead;
+- no preview outside a flow, no [SQL editor](sql-editor.md) or SQL mode, and no [charts](visualizations.md);
+- for writes: only Overwrite and Append, no virtual table and no partitioning; a write never changes the table's
+  columns.
+
+Which tables Flowfile reads: Iceberg format version 2 and 3. A table with equality deletes (rows deleted by value, as
+Flink writes them) is refused with a sentence that says so. Writes go to format version 2 tables; a version 3 table
+is refused before any file is written.
+
+### What it does not do yet
+
+In plain words:
+
+- Tested with Apache Polaris, with a sign-in, and Lakekeeper, without one. Signing in by token or by client id and
+  secret only: not AWS request signing, so not AWS Glue; a separate identity provider's token endpoint (Keycloak,
+  Entra, Okta) is the same client code with another address and was not run against one.
+- One level of schemas, and names without a dot.
+- Tables on S3-compatible storage whose keys the catalog hands out.
+- The cloud storage nodes' own forms do not offer Iceberg; use Read from Catalog and Write to Catalog, or
+  `ff.read_from_cloud_storage(..., file_format="iceberg", catalog="polaris")` from Python (see
+  [An Iceberg table kept by a REST catalog](../../python-api/reference/reading-data.md#an-iceberg-table-kept-by-a-rest-catalog)).
+- On a multi-user server only an administrator adds, tests or edits one; its owner or an administrator removes it. It
+  is private until shared like any catalog: Use lets a person see it, list its tables and read them in a flow; Manage
+  also lets them write. Neither changes the address or the sign-in.
+- A project does not carry these catalogs: the address and the sign-in are this install's own.
+
+---
+
 ## Lineage
 
 The catalog tracks full data lineage — which flows produce and consume each table:

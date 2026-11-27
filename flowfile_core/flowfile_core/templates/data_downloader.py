@@ -30,6 +30,12 @@ def get_template_data_dir() -> Path:
     return storage.template_data_directory
 
 
+def template_data_folders() -> list[Path]:
+    """Every folder template data is read from: a checkout's own copy when there is one, and the local cache."""
+    folders = [_REPO_TEMPLATE_DIR] if _REPO_TEMPLATE_DIR.is_dir() else []
+    return [*folders, get_template_data_dir()]
+
+
 def _download_file(url: str, local_path: Path, timeout: int = 30) -> None:
     """Download a single file from a URL to a local path."""
     logger.info("template-download start: url=%s -> dest=%s", url, local_path)

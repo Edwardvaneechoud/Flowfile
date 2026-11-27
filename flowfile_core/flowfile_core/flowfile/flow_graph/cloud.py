@@ -34,9 +34,56 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 from flowfile_core.schemas.delta_write import MERGE_MODES
 from shared.cloud_storage.uri import storage_type_for_uri
 from shared.cloud_storage.utils import normalize_delta_path, validate_cloud_resource_path
+from shared.iceberg_utils import IcebergTableRef
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph.graph import FlowGraph
+
+
+ICEBERG_ON_A_SERVER = (
+    "On a multi-user server an Iceberg table is reached through a catalog an administrator added to Flowfile's"
+    " catalog; name that catalog instead of an address."
+)
+
+
+def iceberg_refusal(settings: CloudStorageSettings) -> str | None:
+    """Why an Iceberg node cannot run here, or ``None``.
+
+    On a multi-user server the address a person typed would make the server call it and use whatever an open catalog
+    on the server's network hands out, so a node with an address is refused there. A node that names a catalog kept
+    elsewhere is not: only an administrator adds one, and the run is checked against its grants.
+    """
+    named = settings.iceberg_catalog is not None and settings.iceberg_catalog.catalog is not None
+    if not named and not sharing.ambient_credentials_allowed():
+        return ICEBERG_ON_A_SERVER
+    return None
+
+
+def _iceberg_table_ref(settings: CloudStorageSettings, user_id: int | None, *, writes: bool = False) -> IcebergTableRef:
+    """The table an Iceberg node names, as its settings are when it runs; a sign-in as its stored ciphertext."""
+    refusal = iceberg_refusal(settings)
+    if refusal:
+        raise ValueError(refusal)
+    catalog = settings.iceberg_catalog
+    if catalog is None:
+        raise ValueError("An Iceberg table is reached through its catalog: set iceberg_catalog")
+    if catalog.catalog is not None:
+        from flowfile_core.catalog.services.external_catalogs import table_ref_for_run
+        from flowfile_core.database.connection import get_db_context
+
+        with get_db_context() as db:
+            return table_ref_for_run(db, catalog.catalog, settings.resource_path, user_id, writes=writes)
+    token = None
+    if catalog.token_secret:
+        if run_secrets.is_provider_secret(user_id, catalog.token_secret):
+            raise ValueError(
+                f"A secret your hub keeps, {catalog.token_secret!r}, cannot sign in to an Iceberg catalog yet; store"
+                " the token as a secret of your own in this Flowfile."
+            )
+        token = run_secrets.encrypted_secret(user_id, catalog.token_secret)
+        if token is None:
+            raise ValueError(f"No stored secret is named {catalog.token_secret!r} for the catalog's token.")
+    return IcebergTableRef(catalog.uri, settings.resource_path, catalog.warehouse, token)
 
 
 def get_cloud_connection_settings(

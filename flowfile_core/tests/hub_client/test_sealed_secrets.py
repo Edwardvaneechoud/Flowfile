@@ -385,3 +385,60 @@ def test_rows_the_hub_lists_are_marked_hub_and_the_machines_own_local(hub, user_
 
     assert len(listed) == 4 and all(row.source == "hub" and row.id < 0 for row in listed)
     assert len(own) == 3 and all(row.source == "local" for row in own)
+
+
+def iceberg_node(user_id: int, token_secret: str | None, *, writer: bool = False):
+    """A cloud storage reader (or writer) on an Iceberg table whose catalog signs in with the stored secret named
+    ``token_secret``, as a flow built in Python or opened from a file has it."""
+    from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
+
+    catalog = cloud_ss.IcebergCatalogSettings(
+        uri="http://catalog.example/api/catalog", warehouse="lake", token_secret=token_secret
+    )
+    if writer:
+        return input_schema.NodeCloudStorageWriter(
+            flow_id=1, node_id=8, user_id=user_id, depending_on_id=7,
+            cloud_storage_settings=cloud_ss.CloudStorageWriteSettings(
+                resource_path="sales.orders", file_format="iceberg", write_mode="overwrite", iceberg_catalog=catalog
+            ),
+        )
+    return input_schema.NodeCloudStorageReader(
+        flow_id=1, node_id=7, user_id=user_id,
+        cloud_storage_settings=cloud_ss.CloudStorageReadSettings(
+            resource_path="sales.orders", file_format="iceberg", iceberg_catalog=catalog
+        ),
+    )
+
+
+
+def test_an_iceberg_nodes_hub_sign_in_moves_and_vends_nothing_and_a_local_one_runs_as_before(
+    hub, user_id, local_secret
+):
+    """A hub secret cannot sign in to an Iceberg catalog yet (a sealed value is no ``$ffsec$`` ciphertext, which
+    ``IcebergTableRef`` takes), so its name is asked of no vend and the step is moved to no hub server; the reader and
+    the writer are refused in one sentence where their table is named. A secret stored here is resolved to its
+    ciphertext as before."""
+    from flowfile_core.flowfile.flow_graph.cloud import _iceberg_table_ref
+
+    hub.secret_values = {"on_the_hub": "hub-token"}
+    reader, writer = iceberg_node(user_id, "on_the_hub"), iceberg_node(user_id, "on_the_hub", writer=True)
+    mine = iceberg_node(user_id, local_secret)
+
+    assert run_secrets.is_provider_secret(user_id, "on_the_hub")
+    assert [run_secrets.names_for(Step(node)) for node in (reader, writer, mine)] == [[], [], []]
+    assert [run_secrets.provider_secret_names(Step(node)) for node in (reader, writer)] == [[], []]
+    assert [run_secrets.connections_for(Step(node)) for node in (reader, writer)] == [[], []]
+    said = []
+    for node, writes in ((reader, False), (writer, True)):
+        with pytest.raises(ValueError) as refused:
+            _iceberg_table_ref(node.cloud_storage_settings, user_id, writes=writes)
+        said.append(str(refused.value))
+    assert said == [
+        "A secret your hub keeps, 'on_the_hub', cannot sign in to an Iceberg catalog yet; store the token as a"
+        " secret of your own in this Flowfile."
+    ] * 2
+    with get_db_context() as db:
+        stored = db.query(db_models.Secret).filter(db_models.Secret.name == local_secret).one().encrypted_value
+    resolved = _iceberg_table_ref(mine.cloud_storage_settings, user_id).token
+    ciphertext, its_own = resolved.startswith("$ffsec$"), resolved == stored
+    assert (ciphertext, its_own) == (True, True)

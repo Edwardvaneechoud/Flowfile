@@ -1,0 +1,87 @@
+name: iceberg-proof
+
+# Two catalogs on one MinIO: Lakekeeper (open) and Apache Polaris (asks for a sign-in).
+# Every value comes from test_utils/iceberg_rest/fixtures.py; start it with: python -m test_utils.iceberg_rest start
+services:
+  minio:
+    container_name: iceberg-proof-minio
+    image: ${ICEBERG_PROOF_MINIO_IMAGE:?}
+    command: server /data --address ":${ICEBERG_PROOF_S3_PORT:?}"
+    environment:
+      MINIO_ROOT_USER: ${ICEBERG_PROOF_MINIO_USER:?}
+      MINIO_ROOT_PASSWORD: ${ICEBERG_PROOF_MINIO_PASSWORD:?}
+    ports:
+      - "127.0.0.1:${ICEBERG_PROOF_S3_PORT:?}:${ICEBERG_PROOF_S3_PORT:?}"
+      - "127.0.0.1:${ICEBERG_PROOF_CATALOG_PORT:?}:${ICEBERG_PROOF_CATALOG_PORT:?}"
+      - "127.0.0.1:${ICEBERG_PROOF_POLARIS_PORT:?}:${ICEBERG_PROOF_POLARIS_PORT:?}"
+      - "127.0.0.1:${ICEBERG_PROOF_POLARIS_HEALTH_PORT:?}:${ICEBERG_PROOF_POLARIS_HEALTH_PORT:?}"
+    volumes:
+      - iceberg-proof-minio-data:/data
+    networks: [iceberg-proof-net]
+
+  postgres:
+    container_name: iceberg-proof-postgres
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: ${ICEBERG_PROOF_PG_PASSWORD:?}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 10s
+      retries: 15
+    volumes:
+      - iceberg-proof-pg-data:/var/lib/postgresql/data
+    networks: [iceberg-proof-net]
+
+  migrate:
+    container_name: iceberg-proof-migrate
+    image: ${ICEBERG_PROOF_CATALOG_IMAGE:?}
+    command: ["migrate"]
+    restart: "no"
+    environment: &lakekeeper
+      LAKEKEEPER__PG_ENCRYPTION_KEY: ${ICEBERG_PROOF_ENCRYPTION_KEY:?}
+      LAKEKEEPER__PG_DATABASE_URL_READ: ${ICEBERG_PROOF_PG_URL:?}
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: ${ICEBERG_PROOF_PG_URL:?}
+      LAKEKEEPER__LISTEN_PORT: ${ICEBERG_PROOF_CATALOG_PORT:?}
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [iceberg-proof-net]
+
+  catalog:
+    container_name: iceberg-proof-catalog
+    image: ${ICEBERG_PROOF_CATALOG_IMAGE:?}
+    command: ["serve"]
+    # Shares MinIO's network, so 127.0.0.1 means the same store to the catalog and to the host.
+    network_mode: "service:minio"
+    environment: *lakekeeper
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      minio: {condition: service_started}
+
+  polaris:
+    container_name: iceberg-proof-polaris
+    image: ${ICEBERG_PROOF_POLARIS_IMAGE:?}
+    # Shares MinIO's network, as the other catalog does.
+    network_mode: "service:minio"
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${ICEBERG_PROOF_MINIO_USER:?}
+      AWS_SECRET_ACCESS_KEY: ${ICEBERG_PROOF_MINIO_PASSWORD:?}
+      POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,${ICEBERG_PROOF_POLARIS_ROOT_SECRET:?}
+      polaris.realm-context.realms: POLARIS
+      quarkus.otel.sdk.disabled: "true"
+      quarkus.http.port: ${ICEBERG_PROOF_POLARIS_PORT:?}
+      quarkus.management.port: ${ICEBERG_PROOF_POLARIS_HEALTH_PORT:?}
+      polaris.authentication.token-broker.max-token-generation: ${ICEBERG_PROOF_TOKEN_LIFETIME:?}
+    depends_on:
+      minio: {condition: service_started}
+
+networks:
+  iceberg-proof-net:
+    name: iceberg-proof-net
+
+volumes:
+  iceberg-proof-minio-data:
+    name: iceberg-proof-minio-data
+  iceberg-proof-pg-data:
+    name: iceberg-proof-pg-data

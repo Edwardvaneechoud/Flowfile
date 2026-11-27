@@ -46,6 +46,7 @@ if TYPE_CHECKING:
         NodeRandomSplit,
         OutputSettings,
     )
+    from shared.iceberg_utils import IcebergTableRef
     from shared.kafka.models import KafkaReadSettings
 
 PAYLOAD_KEY = "payload"
@@ -196,6 +197,24 @@ class CloudWritePayload(OperationPayload):
     plan: pl.LazyFrame
     settings: CloudStorageWriteSettings
     connection: FullCloudStorageConnectionWorkerInterface
+
+
+@dataclass(frozen=True, kw_only=True)
+class IcebergWritePayload(OperationPayload):
+    """Append a plan's rows to an Iceberg table its REST catalog keeps, or replace them.
+
+    The compute that writes asks the catalog for the table's keys; the payload holds the table's name and at most
+    the ciphertext of a token for the catalog.
+
+    Attributes:
+        plan: The rows to write.
+        table: The table as the node names it.
+        mode: ``append`` or ``overwrite``.
+    """
+
+    plan: pl.LazyFrame
+    table: IcebergTableRef
+    mode: Literal["append", "overwrite"]
 
 
 @dataclass(frozen=True, kw_only=True)

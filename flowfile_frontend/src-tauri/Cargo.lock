@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "flowfile"
-version = "0.26.0"
+version = "0.27.0-alpha.3"
 dependencies = [
  "dirs 5.0.1",
  "log",

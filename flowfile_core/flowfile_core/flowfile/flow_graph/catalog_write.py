@@ -16,6 +16,13 @@ from flowfile_core.catalog.delta_utils import (
 from flowfile_core.catalog.exceptions import TableExistsError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.semantic import host as semantic
+from flowfile_core.catalog.services.external_catalogs import (
+    ensure_table_row,
+    forget_schema_tables,
+    outside_write_target,
+    refuse_outside_write,
+    table_ref_for_run,
+)
 from flowfile_core.catalog.storage_backend import (
     _catalog_table_dir_name,
     _is_cloud_uri,
@@ -32,6 +39,7 @@ from flowfile_core.flowfile.execution.payloads import (
     DeltaMergePayload,
     DeltaScd2Payload,
     DeltaWritePayload,
+    IcebergWritePayload,
     op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import OperationKind
@@ -41,9 +49,12 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
 from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _authorize_catalog_write,
     _effective_namespace_id,
+    unresolved_schema_refusal,
 )
+from flowfile_core.flowfile.flow_graph.history import placement_check
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.graph_tree.graph_tree import render_flow
+from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
@@ -554,7 +565,10 @@ def _collect_source_table_versions(graph: "FlowGraph", writer_node: "FlowNode | 
         if getattr(setting, "sql_query", None):
             return None
         table_id = getattr(setting, "catalog_table_id", None)
-        if not table_id or table_id in seen_table_ids:
+        if not table_id:
+            # A table another catalog keeps has no id here (a Delta reader's is back-filled at wiring).
+            return None
+        if table_id in seen_table_ids:
             continue
         seen_table_ids.add(table_id)
         table_ids.append(table_id)
@@ -613,7 +627,73 @@ def _readable_plan(graph: "FlowGraph", writer_node: "FlowNode") -> str | None:
         return None
 
 
+CATALOG_CELL_WRITE_REFUSAL = (
+    "A catalog table is not written from this notebook with ff.write_catalog_table: a table of Flowfile's own is "
+    "written with flowfile_ctx.write_catalog_table(frame.collect(), ...), and a table kept by another catalog is "
+    "written by a flow, with a Write to Catalog node."
+)
+
+
+def refuse_catalog_cell_write() -> None:
+    """Refuse a catalog writer run in a catalog page's notebook cell, before any catalog is opened.
+
+    Such a cell runs in a notebook kernel under the ``metadata_lookup`` hook and outside a notebook session (which
+    sets ``placement_check``, and places a writer without running it). The kernel holds no catalog database, so it
+    cannot tell a table of Flowfile's own from one kept elsewhere: both get the same sentence.
+    """
+    if metadata_lookup.get() is not None and placement_check.get() is None:
+        raise ValueError(CATALOG_CELL_WRITE_REFUSAL)
+
+
 PICK_REMOTE_SCHEMA = "No schema on the hub is picked for this table; pick one you may write to."
+
+
+def _outside_target(settings: input_schema.CatalogWriteSettings):
+    """The table a writer names in a schema kept elsewhere (``external_catalogs.OutsideTable``), or ``None``."""
+    with get_db_context() as db:
+        return outside_write_target(db, settings)
+
+
+def _refuse_unresolved_schema(settings: input_schema.CatalogWriteSettings) -> None:
+    """Raise ``unresolved_schema_refusal``'s sentence for a writer whose schema resolves nowhere here."""
+    with get_db_context() as db:
+        refusal = unresolved_schema_refusal(CatalogService(SQLAlchemyCatalogRepository(db)), settings)
+    if refusal is not None:
+        raise ValueError(refusal)
+
+
+def _handle_outside_table_write(
+    graph: "FlowGraph",
+    node_catalog_writer: input_schema.NodeCatalogWriter,
+    df: FlowDataEngine,
+    outside,
+) -> FlowDataEngine:
+    """Append to or overwrite a table a catalog kept elsewhere keeps, as step 2's ``iceberg_write``.
+
+    Refused before anything is written for any other choice. The table travels as an ``IcebergTableRef`` holding the
+    sign-in's ciphertext only (``table_ref_for_run`` checks a writable schema), and the compute that writes asks the
+    catalog for its keys. After the commit the schema's kept table names are dropped and the table gets its lineage
+    row naming the flow as its writer; a failure there is logged, since the data is already in.
+    """
+    settings = node_catalog_writer.catalog_write_settings
+    refuse_outside_write(outside, settings)
+    with get_db_context() as db:
+        table = table_ref_for_run(
+            db, outside.catalog, f"{outside.schema}.{outside.table}", node_catalog_writer.user_id, writes=True
+        )
+    writer_node = graph.get_node(node_catalog_writer.node_id)
+    write = IcebergWritePayload(
+        plan=df.data_frame, table=table, mode=settings.write_mode, flow_id=graph.flow_id, node_id=writer_node.node_id
+    )
+    backend = current_context(graph).backend
+    writer_node.run_op(backend, OperationKind.iceberg_write, op_payload(write), job_id=write.job_id)
+    forget_schema_tables(outside.schema)
+    try:
+        with get_db_context() as db:
+            ensure_table_row(db, outside, written_by=graph._flow_settings.source_registration_id)
+    except Exception:
+        logger.warning("Could not record the catalog row of %s", outside.reference, exc_info=True)
+    return df
 
 
 def _handle_virtual_table_write(
@@ -623,6 +703,8 @@ def _handle_virtual_table_write(
 ) -> FlowDataEngine:
     """Handle virtual-mode catalog write: register a virtual table without materializing data."""
     settings = node_catalog_writer.catalog_write_settings
+    refuse_outside_write(_outside_target(settings), settings)
+    _refuse_unresolved_schema(settings)
     reg_id = graph._flow_settings.source_registration_id
     if not reg_id:
         # Python-built flows have no registration: auto-register under "General > Python Editor".
@@ -781,6 +863,10 @@ def _handle_physical_table_write(
     user_id = node_catalog_writer.user_id or 1
     if table_sources.is_remote(settings.source):
         return _handle_remote_table_write(graph, node_catalog_writer, df, user_id)
+    outside = _outside_target(settings)
+    if outside is not None:
+        return _handle_outside_table_write(graph, node_catalog_writer, df, outside)
+    _refuse_unresolved_schema(settings)
 
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)

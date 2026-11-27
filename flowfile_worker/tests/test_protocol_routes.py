@@ -93,6 +93,7 @@ ROUTES = [
             "file_write",
             "database_write",
             "cloud_write",
+            "iceberg_write",
             "polars_code",
             "sql_query",
         )
@@ -251,6 +252,7 @@ def test_the_v1_paths_are_in_the_openapi_document():
         "/v1/ops/file_write",
         "/v1/ops/database_write",
         "/v1/ops/cloud_write",
+        "/v1/ops/iceberg_write",
         "/v1/ops/polars_code",
         "/v1/ops/sql_query",
     }

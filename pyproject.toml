@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.26.0"
+version = "0.27.0-alpha.3"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -188,6 +188,7 @@ markers = [
     "slow: Tests with a heavy workload or long runtime (deselect with -m 'not slow')",
     "cloud_e2e: Real core + worker processes driven over HTTP against MinIO (Docker)",
     "snowflake: Tests against a live Snowflake account (opt-in via FLOWFILE_TEST_SNOWFLAKE_* env vars)",
+    "iceberg_rest: Tests against a running Iceberg REST catalog on MinIO (python -m test_utils.iceberg_rest start); skip without it",
 ]
 
 [tool.coverage.run]

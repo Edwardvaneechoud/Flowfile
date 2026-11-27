@@ -22,7 +22,7 @@
           @click="openMode = 'file'"
         >
           <i class="fa-solid fa-folder"></i>
-          <span>File System</span>
+          <span>{{ fileTabLabel(isMultiUser) }}</span>
         </button>
         <button
           class="sidebar-btn"
@@ -109,6 +109,13 @@ import type { FlowRegistration } from "../../../types";
 import { isHubRow } from "../../../views/CatalogView/hubRows";
 import { runOutcome } from "../../../views/CatalogView/runStatus";
 import { OpenFromHubCancelled, openHubFlowVersion } from "../openFromHub";
+import {
+  fileTabLabel,
+  takeWorkspaceRequest,
+} from "../../../components/common/FileBrowser/workspaceRoots";
+import { useMultiUser } from "../../../composables/useMultiUser";
+
+const { isMultiUser } = useMultiUser();
 
 const props = defineProps({
   visible: {
@@ -172,6 +179,7 @@ watch(
 watch(isVisible, (v) => {
   if (v !== props.visible) emit("update:visible", v);
   if (!v) emit("open-cancelled");
+  if (v && takeWorkspaceRequest()) openMode.value = "file";
 });
 
 // Remember the last-used source and namespace across sessions.

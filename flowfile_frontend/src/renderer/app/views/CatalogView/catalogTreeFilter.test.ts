@@ -269,3 +269,21 @@ describe("place and reach", () => {
     expect(subtreeLeafCount(mixed, filter("", true))).toBe(2);
   });
 });
+
+describe("a schema another catalog stopped listing", () => {
+  const listed = node({ id: 41, name: "sales", level: 1, kept_elsewhere: true });
+  const gone = node({
+    id: 42,
+    name: "marketing",
+    level: 1,
+    kept_elsewhere: true,
+    gone_since: "2026-11-22T10:00:00",
+    unavailable_reason: "No longer in polaris's own catalog since 2026-11-22 10:00 UTC.",
+  });
+
+  it("shows only under Show unavailable, as an unavailable hub catalog does", () => {
+    expect(shownNamespaces([listed, gone], filter("")).map((n) => n.id)).toEqual([41]);
+    expect(shownNamespaces([listed, gone], filter("", true)).map((n) => n.id)).toEqual([41, 42]);
+    expect(namespaceShown(gone, filter("", true))).toBe(true);
+  });
+});

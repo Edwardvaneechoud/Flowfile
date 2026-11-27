@@ -21,7 +21,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
 from flowfile_core.flowfile.user_defined.registry import registry
 from shared.storage_config import storage
 
-_TMP_FLOW_DIR = Path.cwd() / "flowfile_core/tests/support_files/flows/tmp"
 _PROBE = "pl.Config.set_tbl_rows(7)"
 _PROBE_ENV = "POLARS_FMT_MAX_ROWS"
 _EXEC_MARKER_ENV = "FLOWFILE_TEST_CUSTOM_NODE_EXEC"
@@ -44,12 +43,11 @@ def flow_session_cleanup():
 
 
 @pytest.fixture
-def own_flow(flow_session_cleanup):
-    _TMP_FLOW_DIR.mkdir(parents=True, exist_ok=True)
+def own_flow(flow_session_cleanup, tmp_path):
     created: list[Path] = []
 
     def _make(client) -> int:
-        path = _TMP_FLOW_DIR / f"sec_{uuid.uuid4().hex[:10]}.yaml"
+        path = tmp_path / f"sec_{uuid.uuid4().hex[:10]}.yaml"
         created.append(path)
         resp = client.post("/editor/create_flow/", params={"flow_path": str(path), "register_in_catalog": False})
         assert resp.status_code == 200, resp.text

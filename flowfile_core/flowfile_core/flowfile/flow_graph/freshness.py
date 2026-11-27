@@ -1,4 +1,7 @@
-"""Source fingerprints that decide whether a catalog or cloud Delta reader must re-run."""
+"""Source fingerprints that decide whether a catalog or cloud Delta reader must re-run.
+
+A reader of a table kept by another catalog is fingerprinted by the metadata file that catalog reports now.
+"""
 
 import json
 import os
@@ -10,6 +13,7 @@ from flowfile_core.catalog.delta_utils import (
 )
 from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
 from flowfile_core.flowfile.flow_graph.catalog_resolution import (
+    _outside_table_ref,
     _resolve_catalog_sql_tables,
     _resolve_catalog_table_info,
 )
@@ -20,6 +24,7 @@ from flowfile_core.flowfile.parameter_resolver import (
     resolve_parameters,
 )
 from flowfile_core.schemas import input_schema
+from shared.iceberg_utils import metadata_fingerprint
 
 
 def _probe_version_entry(path: str, storage_options: dict | None, version_cache: dict[str, int]) -> int:
@@ -131,6 +136,8 @@ def _catalog_reader_source_fingerprint(
     info = _resolve_catalog_table_info(settings)
     if not info.authorized:
         return None, True
+    if info.kept_elsewhere is not None:
+        return metadata_fingerprint(_outside_table_ref(info.kept_elsewhere, settings.user_id)), False
     if info.table_type == "virtual":
         sub_entries, force = _fingerprint_virtual_source(
             info.is_optimized, info.producer_fingerprint, info.source_table_versions, version_cache
