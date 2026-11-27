@@ -272,6 +272,22 @@ class TestDockerKernelE2E:
         assert node_data["columns"] == ["x1", "x2", "y", "predicted_y"]
         assert len(node_data["data"]) == 4
 
+    def test_the_kernel_sees_only_the_shared_folder_of_internal_storage(self, kernel_ready: str):
+        """Of the internal storage volume the kernel mounts ``temp/kernel_shared``, at the path core has it."""
+
+        def ls(path: str) -> list[str]:
+            listing = subprocess.run(
+                ["docker", "exec", f"flowfile-kernel-{kernel_ready}", "ls", path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            return listing.stdout.split()
+
+        assert ls("/app/internal_storage") == ["temp"]
+        assert ls("/app/internal_storage/temp") == ["kernel_shared"]
+
 
 if __name__ == "__main__":
     pytest.main(["-m", "docker_integration", "-v", __file__])

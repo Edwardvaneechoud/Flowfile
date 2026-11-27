@@ -8,18 +8,17 @@ from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import KernelInfo
 from shared.storage_config import storage
 
-INTERNAL = "/app/internal_storage"
-
 
 def _manager(monkeypatch, tmp_path, *, catalog_type, catalog_target=None, catalog_volume=None):
     monkeypatch.setenv("FLOWFILE_MODE", "docker")
     monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
+    internal = tmp_path.parent / f"{tmp_path.name}-internal"
     mgr = KernelManager.__new__(KernelManager)
-    mgr._shared_volume = f"{INTERNAL}/cache"
+    mgr._shared_volume = f"{internal}/temp/kernel_shared"
     mgr._catalog_tables_dir = str(tmp_path / "catalog_tables")
     mgr._kernel_volume = "flowfile-internal-storage"
     mgr._kernel_volume_type = "volume"
-    mgr._kernel_mount_target = INTERNAL
+    mgr._kernel_mount_target = str(internal)
     mgr._catalog_volume = catalog_volume or "/srv/flowfile_data"
     mgr._catalog_volume_type = catalog_type
     mgr._catalog_mount_target = catalog_target or str(tmp_path)
@@ -33,7 +32,7 @@ def _user_data_mounts(mgr) -> dict[str, dict]:
     kernel = KernelInfo(id="k", name="k")
     mgr._kernels = {"k": kernel}
     mounts = mgr._build_run_kwargs("k", kernel, {})["mounts"]
-    return {m["Target"]: m for m in mounts if m["Target"] != INTERNAL}
+    return {m["Target"]: m for m in mounts if m["Target"] != mgr._shared_volume}
 
 
 def test_a_bind_of_the_user_data_folder_gives_the_tables_uploads_outputs_and_the_owners_workspace(

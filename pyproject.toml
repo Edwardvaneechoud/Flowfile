@@ -67,7 +67,7 @@ pyiceberg = {extras = ["hadoop"], version = "^0.12.0"}
 boto3 = ">=1.38.40,<1.38.47"
 cryptography = ">=48.0.1,<49.0.0"  # 49 drops x86_64 macOS wheels (Intel Mac pip installs)
 httpx = "^0.28.1"
-docker = ">=7.0.0"
+docker = ">=7.2.0"
 tqdm = "^4.67.1"
 s3fs = ">=2026.6.0"  # fsspec <2026.6.0 renders reference-FS JSON through unsandboxed jinja2 (CVE-2026-104851)
 pl-fuzzy-frame-match = ">=0.7.0"

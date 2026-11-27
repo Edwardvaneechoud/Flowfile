@@ -262,8 +262,6 @@ For the full model — creating groups, the `use`/`manage` levels, how shared se
 
 Python-script nodes run inside short-lived kernel containers spawned by `flowfile-core` via the host Docker socket. To enable them, mount the Docker socket into `flowfile-core` (the bundled compose already does). Creating or starting a kernel pulls its image when it is missing, so this step is optional; pull ahead of time on an air-gapped or slow host.
 
-Of the user data folder, a kernel sees the catalog's tables, the `uploads` and `outputs` folders and its owner's own workspace (`workspaces/<user id>`), at the same paths as `flowfile-core`. A file elsewhere in user data is read with a Read node.
-
 ### 1. Pull the kernel image (optional)
 
 Kernel images are versioned independently of the app; the default tag lives in `flowfile_core/flowfile_core/kernel/images.py`. Pull the matching tag:
@@ -290,6 +288,26 @@ flowfile-core:
 ```
 
 Leave `FLOWFILE_KERNEL_IMAGE` empty to use the registry default, or set it to point at a local or alternative image. Kernels default to 4 GB of memory.
+
+### What a kernel mounts
+
+A kernel mounts these folders, at the paths `flowfile-core` has them:
+
+- the kernels' shared folder, `/app/internal_storage/temp/kernel_shared`: node inputs and outputs, artifacts and the files written with `flowfile_ctx.get_shared_location()`;
+- of the user data folder, `/app/user_data`: the catalog's tables, the `uploads` and `outputs` folders and its owner's own workspace (`workspaces/<user id>`) when user data is bind-mounted from a host folder, as in the bundled compose, and all of it when user data is a named volume.
+
+It mounts nothing else of the internal storage volume. A file elsewhere in user data is read with a Read node.
+
+!!! warning "A named internal-storage volume needs Docker 26.0"
+    Mounting one folder of a named volume needs Docker Engine 26.0 or newer. On an older Docker, with internal storage on a named volume as in the bundled compose, a kernel does not start and its error says so. Upgrade Docker, or give the shared folder a volume of its own, at the same path in `flowfile-core` and `flowfile-worker`:
+
+    ```yaml
+    volumes:
+      - flowfile-internal-storage:/app/internal_storage
+      - flowfile-kernel-shared:/app/internal_storage/temp/kernel_shared
+    ```
+
+    Copy what is in `temp/kernel_shared` into the new volume first, because stored artifacts live there. Internal storage that is bind-mounted from a host folder works on any Docker.
 
 ### Adding extra packages
 
