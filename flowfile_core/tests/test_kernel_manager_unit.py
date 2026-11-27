@@ -986,6 +986,70 @@ class TestCreateKernel:
 # Sanity check: __init__'s startup sequence now calls the GC
 
 
+class TestDeletedKernelsArtifacts:
+    """Deleting a kernel removes the folder it persisted its artifacts in, and nothing else. Real files."""
+
+    @staticmethod
+    def _manager(tmp_path) -> KernelManager:
+        mgr = _bare_manager()
+        mgr._shared_volume = str(tmp_path)
+        mgr._remove_kernel_from_db = MagicMock()
+        mgr._discard_scratch_flow = MagicMock()
+        mgr._end_kernel_token = MagicMock()
+        return mgr
+
+    @staticmethod
+    def _file(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+        return path
+
+    def test_delete_removes_the_kernels_own_folder(self, tmp_path):
+        mgr = self._manager(tmp_path)
+        mgr._kernels["k1"] = _kernel("k1")
+        self._file(tmp_path / "artifacts" / "k1" / "9001" / "model" / "data.artifact")
+        of_another_kernel = self._file(tmp_path / "artifacts" / "k2" / "9001" / "model" / "data.artifact")
+
+        _run(mgr.delete_kernel("k1"))
+
+        assert not (tmp_path / "artifacts" / "k1").exists()
+        assert of_another_kernel.exists()
+        assert "k1" not in mgr._kernels
+
+    def test_delete_of_a_kernel_that_persisted_nothing_is_fine(self, tmp_path):
+        mgr = self._manager(tmp_path)
+        mgr._kernels["k1"] = _kernel("k1")
+
+        _run(mgr.delete_kernel("k1"))
+
+        assert "k1" not in mgr._kernels
+
+    @pytest.mark.parametrize("kernel_id", ["..", ".", "", "k2/9001", "../user_files"])
+    def test_an_id_that_names_no_folder_of_its_own_removes_nothing(self, tmp_path, kernel_id):
+        mgr = self._manager(tmp_path)
+        kept = [
+            self._file(tmp_path / "artifacts" / "k2" / "9001" / "model" / "data.artifact"),
+            self._file(tmp_path / "user_files" / "report.csv"),
+        ]
+
+        mgr._remove_persisted_artifacts(kernel_id)
+
+        assert all(path.exists() for path in kept)
+
+    def test_a_folder_core_may_not_remove_does_not_fail_the_delete(self, tmp_path, monkeypatch, caplog):
+        mgr = self._manager(tmp_path)
+        mgr._kernels["k1"] = _kernel("k1")
+        self._file(tmp_path / "artifacts" / "k1" / "9001" / "model" / "data.artifact")
+        # A kernel writes as root; a core that runs as another user is refused, which a test cannot be.
+        monkeypatch.setattr(kernel_manager.shutil, "rmtree", MagicMock(side_effect=PermissionError("root owns it")))
+
+        with caplog.at_level("WARNING", logger=kernel_manager.logger.name):
+            _run(mgr.delete_kernel("k1"))
+
+        assert "k1" not in mgr._kernels
+        assert "Could not remove the persisted artifacts of kernel 'k1'" in caplog.text
+
+
 class TestStartupSequence:
     def test_init_calls_orphan_gc(self, monkeypatch):
         """Document the contract: any new startup helper must be wired in."""
