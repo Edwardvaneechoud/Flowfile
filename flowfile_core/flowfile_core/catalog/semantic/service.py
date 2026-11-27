@@ -915,17 +915,20 @@ def visible_summaries(tree: list[Any], access: AccessResolver) -> None:
     schema they own or were granted, a catalog every schema of which is); a public one, or one kept only as a
     granted table's breadcrumb, counts the namespaces and tables left under it, so a count never tells of facts the
     caller cannot open.
+
+    It also sets ``semantic_model_readable`` (``_opens_model``), false where the caller has no model to open.
     """
     rule = host.read_rule(access)
-    readable = rule.whole if rule is not None else None
-    if readable is None:
+    if rule is None:
         return
+    readable = rule.whole
 
     def walk(nodes: list[Any]) -> None:
         for node in nodes:
             if node.id is None or node.id < 0:
                 continue
             walk(node.children)
+            node.semantic_model_readable = _opens_model(node, rule)
             if node.semantic_model is None or node.id in readable:
                 continue
             parts = [x.semantic_model for x in [*node.children, *(node.tables or [])] if x.semantic_model]
@@ -934,3 +937,19 @@ def visible_summaries(tree: list[Any], access: AccessResolver) -> None:
             )
 
     walk(tree)
+
+
+def _opens_model(node: Any, rule: host.ReadRule) -> bool:
+    """Whether a restricted caller has a semantic model to open at ``node`` (its children already marked).
+
+    Not for a namespace kept only as a granted item's breadcrumb (its model routes refuse them), nor for a public schema
+    holding no table they read (the model would be its name and notes alone), nor for a catalog none of whose schemas
+    they may open.
+    """
+    if node.id not in rule.visible:
+        return False
+    if node.id in rule.whole:
+        return True
+    if node.parent_id is None:
+        return any(child.semantic_model_readable for child in node.children)
+    return any(rule.table(table.id) for table in node.tables or [])

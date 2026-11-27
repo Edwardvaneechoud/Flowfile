@@ -132,8 +132,10 @@ const outcome = ref("");
 const showDialog = ref(false);
 
 // The tree as last loaded, so the counts follow a change made here or in a schema's model.
-const schemas = computed(
-  () => (catalogStore.findNamespaceInTree(props.catalog.id) ?? props.catalog).children,
+const schemas = computed(() =>
+  (catalogStore.findNamespaceInTree(props.catalog.id) ?? props.catalog).children.filter(
+    (s) => s.semantic_model_readable !== false,
+  ),
 );
 
 const joins = computed(() => (model.value?.joins ?? []).filter((j) => j.layer === "catalog"));

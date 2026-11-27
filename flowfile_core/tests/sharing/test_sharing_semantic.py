@@ -292,6 +292,37 @@ def test_a_table_granted_alone_counts_only_its_own_facts(users, client_for, worl
     assert _tree_node(bob, world.catalog_id)["semantic_model"] == orders["semantic_model"]
 
 
+def _opens(client, ns_id: int) -> bool | None:
+    node = _tree_node(client, ns_id)
+    return None if node is None else node["semantic_model_readable"]
+
+
+def test_the_tree_offers_a_model_only_where_the_reader_can_open_one(users, client_for, world, team, grant_factory):
+    """A breadcrumb of a granted table, and a public schema holding no table of the reader's, offer none."""
+    grant_factory("catalog_table", world.orders_id, team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    assert (_opens(bob, world.catalog_id), _opens(bob, world.sales_id)) == (False, False)
+    assert bob.get(_base(world.sales_id)).status_code == 403, "the tree offered a model its route refuses"
+
+    for ns_id in (world.catalog_id, world.crm_id):
+        _set(db_models.CatalogNamespace, ns_id, is_public=True)
+    carol = client_for("carol")
+    assert (_opens(carol, world.catalog_id), _opens(carol, world.crm_id)) == (False, False)
+    assert _opens(carol, world.sales_id) is None
+
+    grant_factory("catalog_namespace", world.crm_id, team, permission="use", granted_by=users["alice"].id)
+    assert (_opens(bob, world.catalog_id), _opens(bob, world.crm_id)) == (True, True)
+    alice = client_for("alice")
+    assert all(_opens(alice, ns_id) for ns_id in (world.catalog_id, world.sales_id, world.crm_id))
+
+
+def test_a_public_schema_offers_its_model_to_a_reader_who_owns_a_table_in_it(users, client_for, public):
+    world = public.world
+    bob, carol = client_for("bob"), client_for("carol")
+    assert (_opens(bob, world.catalog_id), _opens(bob, world.sales_id)) == (True, True)
+    assert (_opens(carol, world.catalog_id), _opens(carol, world.sales_id)) == (False, False)
+
+
 # A public schema is a container: a reader who neither owns it nor holds a grant on it reads its own facts and the
 # tables in it they own or were granted, nothing about its other tables.
 

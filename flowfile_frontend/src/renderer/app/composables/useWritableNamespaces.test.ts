@@ -14,6 +14,7 @@ import {
   collectWritableSchemaOptions,
   groupSaveTargets,
   pruneNonWritableSchemas,
+  writableBy,
 } from "./useWritableNamespaces";
 
 // canManage semantics from useResourceSharing, without Pinia (no admin override).
@@ -253,5 +254,43 @@ describe("groupSaveTargets", () => {
   it("uses no heading without a hub", () => {
     const groups = groupSaveTargets(collectSaveTargetOptions(tree(), canManage));
     expect(groups.map((g) => g.label)).toEqual([null]);
+  });
+});
+
+describe("writableBy: core's can_write for this machine's rows", () => {
+  const isWritable = (node: Parameters<typeof writableBy>[0]) => writableBy(node, canManage);
+
+  it("leaves out a schema core says the person may not write into, such as a granted table's breadcrumb", () => {
+    const breadcrumb = [
+      ns(60, "alices", { can_write: false }, [
+        ns(61, "private", { parent_id: 60, level: 1, can_write: false }),
+      ]),
+    ];
+    expect(collectWritableSchemaOptions(breadcrumb, isWritable)).toEqual([]);
+    expect(collectWritableSchemaOptions(breadcrumb, canManage)).toHaveLength(1);
+  });
+
+  it("offers a public schema under a catalog shared at use level, which core lets the person write", () => {
+    const publicShared = [
+      ns(1, "General", { access: access("use"), can_write: true }, [
+        ns(2, "default", { parent_id: 1, level: 1, can_write: true }),
+      ]),
+    ];
+    expect(collectWritableSchemaOptions(publicShared, isWritable).map((o) => o.id)).toEqual([2]);
+    expect(collectWritableSchemaOptions(publicShared, canManage)).toEqual([]);
+  });
+
+  it("reads a hub row's access, never a can_write it carries", () => {
+    expect(writableBy({ source: "hub", access: access("use"), can_write: true }, canManage)).toBe(
+      false,
+    );
+    expect(
+      writableBy({ source: "hub", access: access("manage"), can_write: false }, canManage),
+    ).toBe(true);
+  });
+
+  it("falls back to the access for a tree that carries no answer", () => {
+    expect(writableBy({ access: access("use") }, canManage)).toBe(false);
+    expect(writableBy({ access: null }, canManage)).toBe(true);
   });
 });

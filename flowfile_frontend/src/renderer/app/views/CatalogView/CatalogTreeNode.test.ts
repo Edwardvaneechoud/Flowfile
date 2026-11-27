@@ -8,12 +8,14 @@ import { flow, ns, table } from "../../__fixtures__/catalogTree";
 import { fakeStorage, mountIn, text } from "../../__fixtures__/mount";
 import type { NamespaceTree } from "../../types";
 
+const sharing = vi.hoisted(() => ({ multiUser: false, owned: false }));
+
 vi.mock("../../services/axios.config", () => ({ default: {} }));
 vi.mock("../../composables/useResourceSharing", () => ({
   useResourceSharing: () => ({
-    isMultiUser: false,
-    isOwned: () => false,
-    canManage: () => false,
+    isMultiUser: sharing.multiUser,
+    isOwned: () => sharing.owned,
+    canManage: () => sharing.owned,
     canShare: (r: { access?: { is_owner: boolean; access_level: string } | null }) =>
       !r.access || r.access.is_owner || r.access.access_level === "manage",
     isShared: (r: { access?: { is_owner: boolean } | null }) => r.access?.is_owner === false,
@@ -114,6 +116,60 @@ describe("CatalogTreeNode", () => {
     await mount({ ...local, access } as NamespaceTree);
 
     expect(host.querySelector(".shared-badge")?.getAttribute("title")).toBe("Shared by team:sales");
+  });
+});
+
+describe("a schema's Semantic model entry", () => {
+  const catalogWith = (id: number, schema: Partial<NamespaceTree> = {}) =>
+    ns({ id, children: [ns({ id: id + 1, name: "market", level: 1, parent_id: id, ...schema })] });
+  const entries = () => host.querySelectorAll("[data-testid='semantic-model-entry']").length;
+
+  it("shows where core says there is a model to open, and on a tree sent without the flag", async () => {
+    await mount(catalogWith(60, { semantic_model_readable: true }));
+    expect(entries()).toBe(1);
+
+    await mount(catalogWith(62));
+    expect(entries()).toBe(1);
+  });
+
+  it("is not shown on a schema the person has no model to open in", async () => {
+    await mount(catalogWith(64, { semantic_model_readable: false }));
+    expect(entries()).toBe(0);
+  });
+});
+
+describe("the owner's actions on a namespace", () => {
+  beforeEach(() => Object.assign(sharing, { multiUser: true, owned: true }));
+  afterEach(() => Object.assign(sharing, { multiUser: false, owned: false }));
+
+  const catalogWith = (id: number, fields: Partial<NamespaceTree> = {}) =>
+    ns({
+      id,
+      ...fields,
+      children: [ns({ id: id + 1, name: "market", level: 1, parent_id: id, ...fields })],
+    });
+  const count = (selector: string) => host.querySelectorAll(selector).length;
+
+  it("offers sharing and deleting where the person manages the namespace", async () => {
+    await mount(catalogWith(70));
+    expect(count("button[title='Share namespace']")).toBe(2);
+    expect(count("[data-testid='schema-delete']")).toBe(1);
+  });
+
+  it("offers neither on a public namespace someone else owns, while adding to it stays", async () => {
+    await mount(catalogWith(72, { can_manage: false }));
+    expect(count("button[title='Share namespace']")).toBe(0);
+    expect(count("[data-testid='schema-delete']")).toBe(0);
+    expect(count("button[title='Add schema']")).toBe(1);
+    expect(count("button[title='Register table']")).toBe(1);
+  });
+
+  it("offers no adding or registering where the person may not write, such as a breadcrumb", async () => {
+    await mount(catalogWith(74, { can_manage: false, can_write: false }));
+    const titles = Array.from(host.querySelectorAll(".tree-actions button")).map((b) =>
+      b.getAttribute("title"),
+    );
+    expect(titles).toEqual([]);
   });
 });
 

@@ -9,6 +9,7 @@ import { useResourceSharing } from "./useResourceSharing";
 interface HasAccess {
   access?: AccessInfo | null;
   source?: string | null;
+  can_write?: boolean;
 }
 
 export interface SchemaOption {
@@ -34,7 +35,17 @@ export interface SaveTargetGroup {
 const withInheritedAccess = (schema: HasAccess, parent: HasAccess): HasAccess => ({
   access: schema.access ?? parent.access,
   source: parent.source,
+  can_write: schema.can_write,
 });
+
+/**
+ * Whether the person may save into a namespace: core's `can_write` for this machine's rows, and for a hub's (whose
+ * rows carry no such answer) or a tree without it, its access as `canManage` reads it.
+ */
+export function writableBy(node: HasAccess, canManage: (node: HasAccess) => boolean): boolean {
+  if (!isHubRow(node) && node.can_write !== undefined) return node.can_write;
+  return canManage(node);
+}
 
 // Pure core (Pinia-free, unit-testable): flatten "catalog / schema" save-target
 // options from a namespace tree, stripping system schemas and keeping only
@@ -116,7 +127,7 @@ export function useWritableNamespaces() {
   const catalogStore = useCatalogStore();
   const { canManage } = useResourceSharing();
 
-  const isWritableNamespace = (node: HasAccess) => canManage(node);
+  const isWritableNamespace = (node: HasAccess) => writableBy(node, canManage);
 
   const writableSchemaNamespaces = computed<SchemaOption[]>(() =>
     collectWritableSchemaOptions(catalogStore.tree, isWritableNamespace),

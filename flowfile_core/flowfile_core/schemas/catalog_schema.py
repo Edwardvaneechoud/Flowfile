@@ -265,11 +265,19 @@ class NamespaceTree(NamespaceOut):
     reader's and writer's pickers leave them out, while the flow pickers still find them. ``unavailable_reason`` says
     why this Flowfile cannot use a hub catalog's tables (on the hub's own disk, or on storage it does not write).
     ``semantic_model`` counts the semantic-model facts at or under the namespace (``None`` when the ledger is
-    unavailable, and on a hub's rows).
+    unavailable, and on a hub's rows). ``semantic_model_readable`` is false where the caller has no semantic model to
+    open: set only for a restricted caller, by ``catalog.semantic.service.visible_summaries``. ``can_manage`` is false
+    where a restricted caller may not rename, delete or share the namespace or change its storage (they neither own it
+    nor hold a manage grant on it, as on a public namespace, which everyone may write into); set by the tree's filter.
+    ``can_write`` is false where a restricted caller may not create a schema, flow, table or other item in it (a
+    ``use`` grant, or a namespace kept only as a granted item's breadcrumb): ``writable_namespace_ids``, set there too.
     """
 
     place: str | None = None
     semantic_model: SemanticModelSummary | None = None
+    semantic_model_readable: bool = True
+    can_manage: bool = True
+    can_write: bool = True
     offered: bool = True
     unavailable_reason: str | None = None
     children: list["NamespaceTree"] = Field(default_factory=list)
