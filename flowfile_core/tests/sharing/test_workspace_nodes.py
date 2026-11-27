@@ -4,6 +4,8 @@ The conftest puts the process in docker mode with ``tmp_path`` as the user data 
 made for its person (``acting_for``); a scheduled or headless run has none, and its nodes carry the run's user.
 """
 
+import os
+
 import polars as pl
 import pytest
 
@@ -298,6 +300,7 @@ class TestDataSourceNode:
         )
         assert REFUSED in _error(graph.run_graph(), 1)
 
+    @pytest.mark.skipif(os.name == "nt", reason="Windows allows no * in a file name, so no such file can exist")
     def test_a_file_whose_name_is_a_pattern_that_reaches_another_persons_file_is_refused(
         self, users, alice_file, tmp_path
     ):

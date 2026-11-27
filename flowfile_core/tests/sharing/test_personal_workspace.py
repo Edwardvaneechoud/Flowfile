@@ -660,6 +660,8 @@ class TestCatalogTableFromAFile:
         self, alice, bob, tmp_path, folder, beside
     ):
         """The worker expands a pattern, also where a file of that very name lies in the shared folder."""
+        if beside and os.name == "nt" and set(folder) & set("*?"):
+            pytest.skip("Windows allows no * or ? in a file name, so no such file can lie there")
         private = _alice_file(alice)
         pattern = tmp_path / folder / private.parent.name / private.name
         if beside:
