@@ -16,7 +16,7 @@ import sys
 import time
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -122,6 +122,7 @@ class Services:
     cwds: dict[str, Path]
     storage: dict[str, Path]
     flows_dir: Path
+    pids: dict[str, int] = field(default_factory=dict)
 
     def get(self, path: str, **params):
         response = self.http.get(f"{self.base}{path}", params=params)
@@ -213,7 +214,10 @@ def running_services(
         storage = {name: cwd / f"{name}_storage" for name, cwd in cwds.items()}
     else:
         storage = dict.fromkeys(cwds, root / "storage")
-    flows_dir = storage["core"] / "e2e_flows"
+    # A server opens a flow only from its own flow folders or the person's workspace.
+    flows_dir = (
+        Path(base_env["FLOWFILE_USER_DATA_DIR"]) / "flows" if mode == "docker" else storage["core"] / "e2e_flows"
+    )
     for path in (root / "home", flows_dir):
         path.mkdir(parents=True)
     logs = {name: root / f"{name}.log" for name in cwds}
@@ -247,7 +251,8 @@ def running_services(
         assert token.status_code == 200, token.text
         http = requests.Session()
         http.headers["Authorization"] = f"Bearer {token.json()['access_token']}"
-        yield Services(mode=mode, base=base, http=http, cwds=cwds, storage=storage, flows_dir=flows_dir)
+        pids = {name: proc.pid for name, proc in procs.items()}
+        yield Services(mode=mode, base=base, http=http, cwds=cwds, storage=storage, flows_dir=flows_dir, pids=pids)
     finally:
         for proc in reversed(procs.values()):
             stop(proc)

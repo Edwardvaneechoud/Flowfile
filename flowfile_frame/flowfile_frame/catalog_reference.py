@@ -284,7 +284,10 @@ class SchemaReference:
         object.__setattr__(self, "id", state[2])
 
     def list_tables(self) -> list[CatalogTableOut]:
-        """Return tables registered in this schema."""
+        """Return the tables in this schema.
+
+        For a schema of a catalog kept elsewhere, the tables that catalog has now.
+        """
         return _metadata.tables(self.id)
 
     def get_flow(self, name: str) -> FlowRef:

@@ -1,4 +1,4 @@
-// localStorage persistence for open notebook tabs (cells in wire format); outputs, exec-state and sessionFlowId are intentionally not persisted.
+// localStorage persistence for open notebook tabs (cells in wire format); outputs and exec-state are intentionally not persisted.
 import type { NotebookCellType, NotebookCellWire } from "../api/notebook.api";
 
 export const PERSISTENCE_KEY = "flowfile.notebook.v1";
@@ -23,6 +23,8 @@ const resolveStorage = (storage?: StorageLike | null): StorageLike | null => {
 export interface PersistedNotebook {
   tabId: string;
   persistedId: number | null;
+  /** The kernel namespace the tab runs in, so a reload finds its variables; absent in older entries. */
+  sessionFlowId?: number;
   name: string;
   description: string | null;
   namespaceId: number | null;
@@ -56,6 +58,9 @@ const sanitizeCell = (raw: unknown): NotebookCellWire | null => {
   };
 };
 
+/** Always negative: a positive id would be a real flow's namespace. */
+const isSessionId = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) < 0;
+
 const sanitizeNotebook = (raw: unknown): PersistedNotebook | null => {
   if (typeof raw !== "object" || raw === null) return null;
   const o = raw as Record<string, unknown>;
@@ -66,6 +71,7 @@ const sanitizeNotebook = (raw: unknown): PersistedNotebook | null => {
   return {
     tabId: o.tabId,
     persistedId: typeof o.persistedId === "number" ? o.persistedId : null,
+    ...(isSessionId(o.sessionFlowId) ? { sessionFlowId: o.sessionFlowId } : {}),
     name: typeof o.name === "string" ? o.name : "Untitled notebook",
     description: typeof o.description === "string" ? o.description : null,
     namespaceId: typeof o.namespaceId === "number" ? o.namespaceId : null,

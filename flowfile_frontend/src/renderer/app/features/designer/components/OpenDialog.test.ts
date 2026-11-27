@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // The Open dialog's Catalog tab with a hub's flow beside this machine's: a local flow opens by its path, a hub flow's
 // newest version opens through core as the person's copy.
-import { h, type FunctionalComponent, type SetupContext } from "vue";
+import { defineComponent, h, ref, type FunctionalComponent, type SetupContext } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeStorage, element, mountIn, settle } from "../../../__fixtures__/mount";
 import { httpError } from "../../../__fixtures__/promises";
@@ -12,9 +12,14 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
+  multiUser: false,
 }));
 
 vi.mock("../../../api", () => ({ CatalogApi: { getFlows: mocks.getFlows } }));
+vi.mock("../../../composables/useMultiUser", async () => {
+  const { ref } = await import("vue");
+  return { useMultiUser: () => ({ isMultiUser: ref(mocks.multiUser) }) };
+});
 // The real hubFlows.api for refusalOf, over a stand-in for axios so nothing reads tokens at import.
 vi.mock("../../../services/axios.config", () => ({ default: {} }));
 vi.mock("../../../api/hubFlows.api", async () => ({
@@ -48,6 +53,7 @@ vi.mock("./CatalogNamespacePicker.vue", async () => {
 });
 
 import OpenDialog from "./OpenDialog.vue";
+import { requestWorkspaceOpen } from "../../../components/common/FileBrowser/workspaceRoots";
 
 const stubs: Record<string, FunctionalComponent> = {
   "el-dialog": (_, { slots }) => h("div", [slots.default?.(), slots.footer?.()]),
@@ -91,6 +97,7 @@ beforeEach(() => {
   mocks.confirm.mockReset().mockResolvedValue("confirm");
   mocks.success.mockReset();
   mocks.error.mockReset();
+  mocks.multiUser = false;
 });
 
 afterEach(() => {
@@ -200,5 +207,32 @@ describe("OpenDialog's Catalog tab", () => {
     expect(mocks.openFromHub).not.toHaveBeenCalled();
     expect(mocks.error).toHaveBeenCalledWith("This flow has no published version yet.");
     expect(opened).toEqual([]);
+  });
+});
+
+describe("OpenDialog's file tab", () => {
+  const fileTab = (root: HTMLElement) => root.querySelectorAll(".sidebar-btn")[0] as HTMLElement;
+
+  it("is called Workspace on a server and File System on a desktop", async () => {
+    mocks.multiUser = true;
+    const server = await mountIn(OpenDialog, { props: { visible: true }, stubs });
+    expect(fileTab(server).textContent).toContain("Workspace");
+    mocks.multiUser = false;
+    const desktop = await mountIn(OpenDialog, { props: { visible: true }, stubs });
+    expect(fileTab(desktop).textContent).toContain("File System");
+  });
+
+  it("opens on the file tab when the editor was asked to open the workspace", async () => {
+    localStorage.setItem("openDialog_mode", "catalog");
+    const visible = ref(false);
+    const Host = defineComponent({
+      setup: () => () => h(OpenDialog, { visible: visible.value }),
+    });
+    const root = await mountIn(Host, { stubs });
+    expect(fileTab(root).classList.contains("active")).toBe(false);
+    requestWorkspaceOpen();
+    visible.value = true;
+    await settle();
+    expect(fileTab(root).classList.contains("active")).toBe(true);
   });
 });

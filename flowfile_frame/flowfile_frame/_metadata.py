@@ -208,17 +208,31 @@ def local_namespace_id_by_full_name(full_name: str, *, user_id: int) -> int | No
 
 
 def tables(namespace_id: int) -> list[CatalogTableOut]:
-    """The tables registered in a schema, as the catalog lists them for the user."""
-    asked, answer = _ask("tables", namespace_id=namespace_id)
+    """The tables in a schema, as the catalog lists them for the user; a schema kept elsewhere's as its catalog has
+    them now. A catalog page cell's runtime raises core's refusal as an HTTP status error; it is raised here as its
+    sentence, as the catalog reader's lookup does."""
+    try:
+        asked, answer = _ask("tables", namespace_id=namespace_id)
+    except Exception as exc:
+        from flowfile_core.flowfile.flow_graph.catalog_resolution import _core_refusal
+
+        sentence = _core_refusal(exc)
+        if sentence is None:
+            raise
+        raise ValueError(sentence) from None
     if asked:
         return [CatalogTableOut.model_validate(row) for row in answer]
     return local_tables(namespace_id, user_id=current_user_id())
 
 
 def local_tables(namespace_id: int, *, user_id: int) -> list[CatalogTableOut]:
+    from flowfile_core.catalog.services.external_catalogs import schema_tables
     from flowfile_core.database.connection import get_db_context
 
     with get_db_context() as db:
+        kept_elsewhere = schema_tables(db, namespace_id, user_id)
+        if kept_elsewhere is not None:
+            return kept_elsewhere
         return _service(db).list_tables(namespace_id=namespace_id, user_id=user_id)
 
 

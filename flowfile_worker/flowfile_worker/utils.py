@@ -1,4 +1,5 @@
 from shared.cloud_credential_provider import register_secret_decryptor
+from shared.iceberg_utils import register_run_log
 
 
 def _decrypt_plan_credentials(encrypted: str) -> str:
@@ -10,3 +11,13 @@ def _decrypt_plan_credentials(encrypted: str) -> str:
 
 
 register_secret_decryptor(_decrypt_plan_credentials)
+
+
+def _log_for_node(flow_id: int, node_id: int | str, message: str) -> None:
+    """Write a line an Iceberg read or write says about itself to the node's run log."""
+    from flowfile_worker.flow_logger import get_worker_logger
+
+    get_worker_logger(flow_id, node_id).info(message)
+
+
+register_run_log(_log_for_node)

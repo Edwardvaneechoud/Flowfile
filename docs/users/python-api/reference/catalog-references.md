@@ -111,7 +111,7 @@ Like `CatalogReference`, schema references are immutable, hashable, and picklabl
 
 #### `list_tables() -> list[CatalogTableOut]` — SchemaReference
 
-Return tables registered in this schema.
+Return tables registered in this schema. For a schema of a [catalog from elsewhere](../../visual-editor/catalog/index.md#a-catalog-from-elsewhere), it lists the tables that catalog has now, each by name with its `qualified_name` (`catalog.schema.table`) and without its columns.
 
 #### `read_table(name, *, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start="now", include_change_preimage=False, description=None, flow_graph=None) -> FlowFrame`
 

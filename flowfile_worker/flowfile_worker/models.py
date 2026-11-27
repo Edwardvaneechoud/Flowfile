@@ -41,6 +41,7 @@ OperationType = Literal[
     "scd2_delta",
     "polars_code",
     "sql_query",
+    "write_iceberg",
 ]
 ResultType = Literal["polars", "other"]
 

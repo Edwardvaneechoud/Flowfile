@@ -55,7 +55,10 @@ def _unresolved(*values: str | None) -> bool:
 def _cloud_refusal(settings: CloudStorageSettings, role: str, user_id: int | None) -> str | None:
     """``validate_cloud_resource_path`` and the connection rules of ``get_cloud_connection_settings``, undecrypted."""
     from flowfile_core.flowfile.flow_graph import get_cloud_connection_settings
+    from flowfile_core.flowfile.flow_graph.cloud import iceberg_refusal
 
+    if settings.file_format == "iceberg":
+        return iceberg_refusal(settings)
     if _unresolved(settings.resource_path, settings.connection_name):
         return None
     try:

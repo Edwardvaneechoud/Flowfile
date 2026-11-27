@@ -497,7 +497,13 @@ def _cloud_path_issues(node: "FlowNode") -> list[SettingsValidationIssue]:
     role = _CLOUD_PATH_ROLES.get(node.node_type)
     if role is None or not node.is_setup:
         return []
-    path = node.setting_input.cloud_storage_settings.resource_path
+    settings = node.setting_input.cloud_storage_settings
+    if settings.file_format == "iceberg":
+        from flowfile_core.flowfile.flow_graph.cloud import iceberg_refusal
+
+        refusal = iceberg_refusal(settings)
+        return [SettingsValidationIssue(kind="invalid_path", input_handle="main", message=refusal)] if refusal else []
+    path = settings.resource_path
     if path and "${" in path:
         return []
     try:

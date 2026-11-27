@@ -51,6 +51,17 @@ RESERVED_ID_MESSAGE = (
 )
 
 
+class KernelDataframeSchemas(DataframeSchemasResponse):
+    """The kernel's dataframe schemas as core answers them.
+
+    ``answered`` is core's own, so it is not on the mirrored wire model: the kernel replied, so an empty
+    ``namespace_generation`` means it holds no such namespace, where a degraded reply (kernel stopped, timed out,
+    too old) says nothing about it. It is here and not in ``kernel/models.py``, which imports nothing else of core.
+    """
+
+    answered: bool = False
+
+
 async def _get_manager():
     from flowfile_core.kernel import get_kernel_manager
 
@@ -524,13 +535,14 @@ async def lsp_diagnostics(kernel_id: str, request: LspRequest, current_user=Depe
     return DiagnosticsResponse(**(await _lsp_forward(kernel_id, "diagnostics", request, current_user) or {}))
 
 
-@router.post("/{kernel_id}/lsp/dataframe_schemas", response_model=DataframeSchemasResponse)
+@router.post("/{kernel_id}/lsp/dataframe_schemas", response_model=KernelDataframeSchemas)
 async def lsp_dataframe_schemas(
     kernel_id: str,
     request: DataframeSchemasRequest,
     current_user=Depends(get_current_active_user),
 ):
-    return DataframeSchemasResponse(**(await _lsp_forward(kernel_id, "dataframe_schemas", request, current_user) or {}))
+    answer = await _lsp_forward(kernel_id, "dataframe_schemas", request, current_user) or {}
+    return KernelDataframeSchemas(**answer, answered=bool(answer))
 
 
 @router.get("/{kernel_id}/display_outputs")

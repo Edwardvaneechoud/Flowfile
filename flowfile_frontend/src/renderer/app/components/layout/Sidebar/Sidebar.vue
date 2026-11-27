@@ -235,6 +235,8 @@ const items = computed(() => {
     if ((entry.hideInElectron || entry.dockerOnly) && isDesktopShell) return false;
     // Projects are admin-only in docker; admins keep it even when disabled (to reach the how-to page).
     if (entry.name === "project" && isMultiUser.value && !isAdmin) return false;
+    // A workspace is a server's (docker or server mode); a pip install has none.
+    if (entry.name === "workspace" && !isMultiUser.value) return false;
     return showsTab(entry, isAdmin, hub.joined);
   };
   const decorate = (entry: INavigationRoute): INavigationRoute =>

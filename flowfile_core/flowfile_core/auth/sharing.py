@@ -292,6 +292,14 @@ def granted_resource_ids(
     if not sharing_enabled():
         return set()
     ids = _direct_granted_ids(db, user_id, resource_type, permission, group_ids=group_ids)
+    if resource_type == "catalog_namespace":
+        # A schema another catalog keeps holds no rows that could show it, so a grant on its catalog reaches it.
+        inherited = expand_namespace_grants(db, user_id, permission, group_ids=group_ids, ns_perms=ns_perms) - ids
+        if inherited:
+            kept = db.query(db_models.CatalogNamespace.id).filter(
+                db_models.CatalogNamespace.id.in_(inherited), db_models.CatalogNamespace.kept_elsewhere.is_(True)
+            )
+            ids |= {row[0] for row in kept}
     if resource_type in _NAMESPACE_SCOPED_TYPES:
         ns_ids = expand_namespace_grants(db, user_id, permission, group_ids=group_ids, ns_perms=ns_perms)
         if ns_ids:

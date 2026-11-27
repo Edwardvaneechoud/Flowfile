@@ -175,7 +175,7 @@ The worker materialises when `must_materialise or (wide and (preview_rows is not
 | `random_split` | one reference per split |
 | `custom_node` | one reference per named output |
 | `ml_train` | the model as a `blob` reference, its digest in `metadata` |
-| `file_write`, `database_write`, `cloud_write` | nothing |
+| `file_write`, `database_write`, `cloud_write`, `iceberg_write` | nothing; `iceberg_write` names a table and its REST catalog, and the compute asks the catalog for the table's keys |
 | `delta_write`, `delta_merge`, `delta_scd2` | the Delta version and counts as `metadata` |
 | `viz_session` | the visualisation session's answer as `metadata` |
 

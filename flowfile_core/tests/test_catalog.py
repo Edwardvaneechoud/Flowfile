@@ -1838,6 +1838,20 @@ class TestReadLinks:
         with get_db_context() as db:
             assert db.query(CatalogTableReadLink).filter_by(registration_id=flow_id).all() == []
 
+    def test_delete_flow_clears_the_writer_of_its_tables_and_fires_no_trigger(self):
+        """A table a deleted flow wrote names no writer, so a reused id is not shown as one; its updated_at stays."""
+        flow_id, table_id = self._setup_flow_and_table()
+        with get_db_context() as db:
+            table = db.get(CatalogTable, table_id)
+            table.source_registration_id = flow_id
+            db.commit()
+            before = db.get(CatalogTable, table_id).updated_at
+            SQLAlchemyCatalogRepository(db).delete_flow(flow_id)
+
+        with get_db_context() as db:
+            table = db.get(CatalogTable, table_id)
+            assert (table.source_registration_id, table.updated_at) == (None, before)
+
     def test_removed_reader_drops_out_of_tables_read(self, tmp_path):
         """End-to-end: the catalog stops reporting a table read once its reader node is gone."""
         from flowfile_core.schemas import input_schema

@@ -214,6 +214,12 @@ def setup_test_db():
             logger.error(f"Error during cleanup: {e}")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def flows_tmp_folder():
+    """The git-ignored folder tests save flows in; it exists whichever test of the session runs first."""
+    (Path(__file__).parent / "support_files" / "flows" / "tmp").mkdir(parents=True, exist_ok=True)
+
+
 @pytest.fixture(autouse=True)
 def reset_auth_user_cache():
     """Fixtures recreate users with new ids; don't let cached auth rows leak across tests."""

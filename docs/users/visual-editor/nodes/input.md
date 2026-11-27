@@ -235,6 +235,18 @@ A virtual table resolves at run time and behaves identically to a physical one f
 
 The node also has a SQL mode for querying across every catalog table, physical and virtual, registered by name in a Polars SQL context — so you can join across the whole catalog. See the [SQL editor](../catalog/sql-editor.md).
 
+### A table kept by another catalog
+
+When an Iceberg REST catalog is [added to Flowfile's catalog](../catalog/index.md#a-catalog-from-elsewhere), its schemas are offered beside your own under **Catalog / Schema**, and **Table** lists that schema's tables as the other catalog lists them now. Picking one shows its columns at once, before anything runs, so the next node can already use them; there is no row count. **Run** reads the table on the worker with a temporary key the other catalog hands out for that table. Nobody types a storage key and none is stored.
+
+The table is read as it is now, whole, so the drawer does not offer **Read** (reading only the changes) or **Version** (reading the table at a version) for it, and **SQL mode** lists no such table; read it in Table mode instead. A reader that asks for its changes or a version anyway (one built in Python, say) fails when it runs, and the drawer shows the reason as a warning under **Read** or **Version**. A table with equality deletes is refused when the flow runs, with a sentence that says so.
+
+In Python:
+
+```python
+orders = ff.read_catalog_table("orders", namespace_full_name="polaris.sales")
+```
+
 ## ![REST API](../../../assets/images/nodes/rest_api_reader.svg){ width="44" height="44" } REST API { #rest-api-reader }
 
 Fetches JSON from an HTTP endpoint. Supports `GET` and `POST`, custom headers and query parameters, several authentication schemes, and automatic pagination. JSON is the only supported response format.

@@ -13,6 +13,9 @@ import type {
   CatalogTablePreview,
   CatalogVisualization,
   DeltaTableHistory,
+  ExternalCatalogSyncResult,
+  ExternalTable,
+  ExternalTableDetail,
   FlowRegistration,
   FlowRun,
   FlowRunDetail,
@@ -25,6 +28,18 @@ import type {
   VisualizationUpdatePayload,
   VizSourceDescriptor,
 } from "../types";
+
+const externalTableRequests: Record<string, number> = {};
+// When each schema's tables last arrived, by this browser's clock; a list older than a minute is asked for again.
+const externalTablesArrived: Record<string, number> = {};
+export const EXTERNAL_TABLES_STALE_MS = 60_000;
+let externalTableDetailRequest = 0;
+
+/** The sentence core answered with (a 422's string detail), else the fallback. */
+function detailText(e: any, fallback: string): string {
+  const detail = e?.response?.data?.detail;
+  return typeof detail === "string" ? detail : fallback;
+}
 
 // Monotonic token guarding the artifact-versions fetch against out-of-order responses.
 let artifactVersionsRequestToken = 0;
@@ -74,7 +89,18 @@ export const OVERVIEW_TTL_MS = 30_000;
 /** The catalog items a route can select, which `holdsItem` looks up in the loaded overview. */
 export type CatalogItemKind = "namespace" | "table" | "flow" | "schedule" | "artifact";
 
+/** A schema's tables as a catalog kept elsewhere listed them, keyed `"<catalogId>:<schemaId>"`. */
+export interface ExternalTablesState {
+  tables: ExternalTable[];
+  listedAt: string | null;
+  loading: boolean;
+  error: string | null;
+}
+
 interface CatalogState {
+  externalTables: Record<string, ExternalTablesState>;
+  externalTable: ExternalTableDetail | null;
+  externalTableError: string | null;
   tree: NamespaceTree[];
   allFlows: FlowRegistration[];
   favorites: FlowRegistration[];
@@ -197,6 +223,9 @@ function writeCachedHistory(tableId: number, history: DeltaTableHistory): void {
 
 export const useCatalogStore = defineStore("catalog", {
   state: (): CatalogState => ({
+    externalTables: {},
+    externalTable: null,
+    externalTableError: null,
     tree: [],
     allFlows: [],
     favorites: [],
@@ -342,6 +371,90 @@ export const useCatalogStore = defineStore("catalog", {
   },
 
   actions: {
+    /** Brings a catalog kept elsewhere in line with the other catalog; reloads the tree when a schema changed. */
+    async syncExternalCatalog(
+      catalogId: number,
+      force = false,
+    ): Promise<ExternalCatalogSyncResult | null> {
+      try {
+        const result = await CatalogApi.syncExternalCatalog(catalogId, force);
+        if (
+          force ||
+          result.added.length ||
+          result.gone.length ||
+          result.back.length ||
+          result.error
+        )
+          await this.loadTree();
+        return result;
+      } catch (e: any) {
+        this.error = detailText(e, "Could not bring the catalog in line");
+        return null;
+      }
+    },
+
+    /** Whether a schema's tables were never listed here, or last arrived more than a minute ago. */
+    externalTablesStale(catalogId: number, schemaId: number): boolean {
+      const arrived = externalTablesArrived[`${catalogId}:${schemaId}`];
+      return arrived === undefined || Date.now() - arrived > EXTERNAL_TABLES_STALE_MS;
+    },
+
+    /** A run in this tab finished and may have written into a catalog kept elsewhere: every list it holds is stale. */
+    markExternalTablesStale() {
+      for (const key of Object.keys(externalTablesArrived)) delete externalTablesArrived[key];
+    },
+
+    /** When the other catalog's list of a schema's tables was taken (core's UTC time), or null before one arrived. */
+    externalTablesListedAt(catalogId: number, schemaId: number): string | null {
+      return this.externalTables[`${catalogId}:${schemaId}`]?.listedAt ?? null;
+    },
+
+    /** The tables of one schema of a catalog kept elsewhere; the newest request for that schema wins. */
+    async loadExternalTables(catalogId: number, schemaId: number, refresh = false) {
+      const key = `${catalogId}:${schemaId}`;
+      const token = (externalTableRequests[key] = (externalTableRequests[key] ?? 0) + 1);
+      const before = this.externalTables[key];
+      this.externalTables[key] = {
+        tables: before?.tables ?? [],
+        listedAt: before?.listedAt ?? null,
+        loading: true,
+        error: null,
+      };
+      try {
+        const listed = await CatalogApi.getExternalTables(catalogId, schemaId, refresh);
+        if (token !== externalTableRequests[key]) return;
+        externalTablesArrived[key] = Date.now();
+        this.externalTables[key] = {
+          tables: listed.tables,
+          listedAt: listed.listed_at,
+          loading: false,
+          error: null,
+        };
+      } catch (e: any) {
+        if (token !== externalTableRequests[key]) return;
+        this.externalTables[key] = {
+          tables: [],
+          listedAt: null,
+          loading: false,
+          error: detailText(e, "The catalog did not list its tables"),
+        };
+      }
+    },
+
+    /** One table's columns as the other catalog describes it; a newer request replaces an older answer. */
+    async loadExternalTable(catalogId: number, schemaId: number, name: string) {
+      const token = ++externalTableDetailRequest;
+      this.externalTable = null;
+      this.externalTableError = null;
+      try {
+        const detail = await CatalogApi.getExternalTable(catalogId, schemaId, name);
+        if (token === externalTableDetailRequest) this.externalTable = detail;
+      } catch (e: any) {
+        if (token === externalTableDetailRequest)
+          this.externalTableError = detailText(e, "The catalog did not describe this table");
+      }
+    },
+
     /** Refreshes the tree in place: the current tree stays shown until the new one replaces it. */
     async loadTree() {
       const token = ++treeRequestToken;

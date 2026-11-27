@@ -63,6 +63,52 @@ export class FileApi {
     }
   }
 
+  /** The file browser's top folders on a server (the person's Workspace, then Shared); empty on a desktop. */
+  static async getBrowseRoots(): Promise<{ name: string; path: string }[]> {
+    try {
+      const response = await axios.get<{ name: string; path: string }[]>("files/roots");
+      return response.data;
+    } catch (error) {
+      return handleApiError(error);
+    }
+  }
+
+  /** A file of a folder the browser shows, saved through the browser's own download. */
+  static async downloadFile(path: string, fileName: string): Promise<void> {
+    try {
+      const response = await axios.get<Blob>("files/download", {
+        params: { path },
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      return handleApiError(error);
+    }
+  }
+
+  /**
+   * Deletes a file, or a folder with what is in it, on a server; `items` is how many files and folders went
+   * with it. With `dryRun` they are only counted and nothing is deleted.
+   */
+  static async deletePath(
+    path: string,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<{ path: string; items: number }> {
+    try {
+      const response = await axios.delete<{ path: string; items: number }>("files/delete", {
+        params: { path, dry_run: opts.dryRun ? true : undefined },
+      });
+      return response.data;
+    } catch (error) {
+      return handleApiError(error);
+    }
+  }
+
   static async getLocalFiles(directory: string): Promise<FileInfo[]> {
     try {
       const response = await axios.get<FileInfo[]>("files/files_in_local_directory/", {

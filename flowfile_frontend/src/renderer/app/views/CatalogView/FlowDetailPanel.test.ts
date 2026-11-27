@@ -5,7 +5,7 @@
 import { h, type FunctionalComponent } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import { describe, expect, it, vi } from "vitest";
-import { flow } from "../../__fixtures__/catalogTree";
+import { flow, ns } from "../../__fixtures__/catalogTree";
 import { element, mountIn, text } from "../../__fixtures__/mount";
 import type { FlowRegistration, FlowSchedule } from "../../types";
 
@@ -188,6 +188,42 @@ describe("FlowDetailPanel", () => {
       "Add",
     );
     expect(host.querySelector("[data-testid='api-panel']")).not.toBeNull();
+  });
+
+  it("opens a table of a schema kept elsewhere as that catalog's table, and its own tables as before", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useCatalogStore();
+    store.tree = [
+      ns({
+        id: 7,
+        name: "polaris",
+        kept_elsewhere: true,
+        children: [ns({ id: 8, name: "sales", parent_id: 7, level: 1, kept_elsewhere: true })],
+      }),
+      ns({ id: 1, name: "General", children: [ns({ id: 2, name: "default", parent_id: 1 })] }),
+    ];
+    const outside = vi.fn();
+    const own = vi.fn();
+    const host = await mountIn(FlowDetailPanel, {
+      props: {
+        flow: flow({
+          tables_read: [{ id: 30, name: "orders", namespace_id: 8 }],
+          tables_produced: [{ id: 31, name: "orders_clean", namespace_id: 2 }],
+        }),
+        artifacts: [],
+        onSelectExternalTable: outside,
+        onSelectTable: own,
+      },
+      pinia,
+      stubs,
+    });
+
+    (host.querySelector(".read-item") as HTMLElement).click();
+    expect(outside).toHaveBeenCalledWith({ catalogId: 7, schemaId: 8, name: "orders" });
+    expect(own).not.toHaveBeenCalled();
+    (host.querySelector(".produced-item") as HTMLElement).click();
+    expect(own).toHaveBeenCalledWith(31);
   });
 
   it("holds the schedules and artifacts sections while they still hold another flow's", async () => {

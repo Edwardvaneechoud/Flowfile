@@ -1292,9 +1292,9 @@ HUB_WRITE_REFUSAL = (
 )
 
 
-def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
+def hub_flow(flow_id: int, *, vended: bool, catalog: str = "sales") -> FlowGraph:
     """A hub catalog reader 1 over ``sales.raw`` into a hub catalog writer 2 into ``sales.curated``, built with no hub
-    session.
+    session; ``catalog`` names the hub's catalog in place of ``sales``.
 
     ``vended`` gives the graph the credential a run's vend would hold: one for ``s3://acme/sales``, both namespaces'
     root, with the hub's ids 11 and 12 of the two schemas.
@@ -1307,7 +1307,7 @@ def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
         add_promise(graph, 1, "catalog_reader")
         graph.add_catalog_reader(
             input_schema.NodeCatalogReader(
-                flow_id=flow_id, node_id=1, user_id=1, source="hub", catalog_full_table_name="sales.raw.orders"
+                flow_id=flow_id, node_id=1, user_id=1, source="hub", catalog_full_table_name=f"{catalog}.raw.orders"
             )
         )
         add_promise(graph, 2, "catalog_writer")
@@ -1318,7 +1318,7 @@ def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
                 depending_on_id=1,
                 user_id=1,
                 catalog_write_settings=input_schema.CatalogWriteSettings(
-                    table_name="out", source="hub", namespace_full_name="sales.curated"
+                    table_name="out", source="hub", namespace_full_name=f"{catalog}.curated"
                 ),
             )
         )
@@ -1332,8 +1332,8 @@ def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
                 run_id="run",
                 vend_id=1,
                 credentials=(credential,),
-                bases={"sales.raw": "s3://acme/sales", "sales.curated": "s3://acme/sales"},
-                ids={"sales.raw": 11, "sales.curated": 12},
+                bases={f"{catalog}.raw": "s3://acme/sales", f"{catalog}.curated": "s3://acme/sales"},
+                ids={f"{catalog}.raw": 11, f"{catalog}.curated": 12},
             )
         )
         graph.catalog_run_id = "run"
@@ -1390,6 +1390,50 @@ def test_a_vended_hub_node_runs_where_s3_is_declared(store, backend_id):
 
     assert placement.refusals == []
     assert placement.assignment == {1: backend_id, 2: backend_id}
+
+
+@pytest.fixture
+def kept_like_the_hub():
+    """A catalog kept elsewhere here with the schemas ``raw`` and ``curated``, named as the hub's catalog of
+    ``hub_flow(catalog=...)`` is: its name."""
+    from flowfile_core.database.models import CatalogNamespace, ExternalCatalog
+
+    name = f"hub_named_{uuid.uuid4().hex[:6]}"
+    with get_db_context() as db:
+        kept = CatalogNamespace(name=name, level=0, owner_id=1, kept_elsewhere=True)
+        db.add(kept)
+        db.commit()
+        schemas = [
+            CatalogNamespace(name=schema, parent_id=kept.id, level=1, owner_id=1, kept_elsewhere=True)
+            for schema in ("raw", "curated")
+        ]
+        db.add_all(schemas)
+        db.add(ExternalCatalog(namespace_id=kept.id, kind="iceberg_rest", uri="http://127.0.0.1:9/api", sign_in="none"))
+        db.commit()
+        ids = [kept.id] + [schema.id for schema in schemas]
+    yield name
+    with get_db_context() as db:
+        db.query(ExternalCatalog).filter_by(namespace_id=ids[0]).delete()
+        db.query(CatalogNamespace).filter(CatalogNamespace.id.in_(ids[1:])).delete(synchronize_session=False)
+        db.query(CatalogNamespace).filter_by(id=ids[0]).delete()
+        db.commit()
+
+
+@pytest.mark.parametrize("vended", [True, False], ids=["vended", "not_vended"])
+def test_a_hub_node_named_like_a_catalog_kept_elsewhere_here_is_placed_as_a_hub_node(store, kept_like_the_hub, vended):
+    graph = hub_flow(8465 if vended else 8466, vended=vended, catalog=kept_like_the_hub)
+
+    for node_id, read, write in ((1, {"s3"}, set()), (2, set(), {"s3"})):
+        node = graph.get_node(node_id)
+        target, namespace, _ = _catalog_target(node.setting_input, graph)
+        if not vended:
+            assert (target, namespace) == (None, None)
+            continue
+        requirements = requirements_for(node.node_template, node.setting_input, catalog_target=target)
+        assert target.kept_elsewhere is False
+        assert (requirements.read_schemes, requirements.write_schemes) == (read, write)
+        assert requirements.python_function is False and requirements.operation != OperationKind.iceberg_write
+        assert namespace == f"{kept_like_the_hub}.{'raw' if node_id == 1 else 'curated'}"
 
 
 @pytest.mark.parametrize("declared", [without(everything(), scheme="s3"), ambient()], ids=["no_s3", "ambient"])

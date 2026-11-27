@@ -3,6 +3,7 @@ import os
 from fastapi import HTTPException
 
 from flowfile_core.configs import logger, settings
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
 from flowfile_core.schemas.input_schema import NewDirectory, RemoveItem, RemoveItemsInput
 from shared.path_utils import contained_path
@@ -17,15 +18,22 @@ def _check_folder_name(name: str) -> None:
         raise HTTPException(400, "A folder name must be one name, without / or \\")
 
 
-def create_dir(new_directory: NewDirectory) -> tuple[bool, Exception | None]:
+def create_dir(new_directory: NewDirectory, user_id: int | None = None) -> tuple[bool, Exception | None]:
     """Create ``dir_name`` in ``source_path``.
 
     The error is a 403 for a target outside the allowed roots (off the desktop also outside the user data
-    directory, the only place the file browser lists there), a 400 for a name that is not one folder name, or
-    the ``OSError`` of the ``mkdir``.
+    directory, the only place the file browser lists there, and on a server outside ``user_id``'s workspace and
+    the shared folder), a 400 for a name that is not one folder name, or the ``OSError`` of the ``mkdir``.
     """
     try:
         _check_folder_name(new_directory.dir_name)
+        if settings.is_server_mode():
+            asked = os.path.join(new_directory.source_path, new_directory.dir_name)
+            full_path = workspace.file_folder(asked, user_id)
+            if full_path is None:
+                raise HTTPException(403, workspace.browse_refusal(new_directory.source_path))
+            os.mkdir(full_path)
+            return True, None
         full_path = validate_path_under_cwd(os.path.join(new_directory.source_path, new_directory.dir_name))
         if not settings.is_electron_mode():
             full_path = contained_path(storage.user_data_directory, full_path)

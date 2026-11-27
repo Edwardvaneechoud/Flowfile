@@ -217,6 +217,7 @@ class TestWriteCatalogTableScd2Kwargs:
 
 class TestNamespaceFullNameThreading:
     def test_namespace_full_name_threads_through_write_catalog_table(self):
+        _seed_namespace()
         df = ff.from_dict({"id": [1, 2]})
         child = df.write_catalog_table(
             "ns_full_name_table",

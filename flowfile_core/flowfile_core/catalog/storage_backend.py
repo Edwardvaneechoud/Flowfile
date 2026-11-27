@@ -73,7 +73,8 @@ class CatalogStorageTarget:
     keeps the connection owner-encrypted for the core→worker hand-off. With
     ``FLOWFILE_COMPUTE_PROTOCOL`` on, ``credential_ref`` names the namespace connection for the
     owner and ``plan_storage_options`` are its options without a secret: what a scan's plan
-    carries (:meth:`scan_kwargs`).
+    carries (:meth:`scan_kwargs`). ``kept_elsewhere`` marks a table another catalog keeps: its
+    ``base`` is only the scheme, and the process that reads it asks that catalog for its keys.
     """
 
     is_cloud: bool
@@ -83,6 +84,7 @@ class CatalogStorageTarget:
     worker_interface: FullCloudStorageConnectionWorkerInterface | None = None
     credential_ref: CredentialRef | None = None
     plan_storage_options: dict[str, str] = field(default_factory=dict)
+    kept_elsewhere: bool = False
 
     def to_worker_payload(self) -> dict | None:
         """Serialize a ``CatalogStorageInterface`` for the worker, or ``None`` for local.

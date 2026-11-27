@@ -75,8 +75,14 @@ def test_a_cell_with_an_import_and_a_loop_runs_in_the_session(orders_flow, clien
     assert result["namespace_generation"] and result["revision"] == 1
 
     schemas = client.post("/notebook/session/schemas", json=_body(orders_flow, kernel_sim)).json()
-    assert schemas["state"] == "ready"
+    assert schemas["state"] == "ready" and schemas["answered"]
+    assert schemas["namespace_generation"] == result["namespace_generation"]
     assert "last" in {frame["name"] for frame in schemas["dataframes"]}
+
+
+def test_schemas_say_that_the_kernel_holds_no_session(orders_flow, client, kernel_sim):
+    schemas = client.post("/notebook/session/schemas", json=_body(orders_flow, kernel_sim)).json()
+    assert schemas["state"] == "unavailable" and schemas["namespace_generation"] == "" and schemas["answered"]
 
 
 def test_execute_opens_the_session_and_reports_a_failing_line(orders_flow, client, kernel_sim):

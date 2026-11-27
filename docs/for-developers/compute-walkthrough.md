@@ -90,7 +90,7 @@ A node whose work is a Polars plan uses `submit`. Anything that needs Flowfile c
 | Family | Kinds |
 |---|---|
 | Reads | `database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read`, `file_read` (Excel, Avro, Arrow streams, non-UTF-8 CSV) |
-| Writes | `file_write`, `database_write`, `cloud_write`, `delta_write`, `delta_merge`, `delta_scd2` |
+| Writes | `file_write`, `database_write`, `cloud_write`, `iceberg_write`, `delta_write`, `delta_merge`, `delta_scd2` |
 | Transforms | `fuzzy_join`, `random_split`, `custom_node`, `polars_code`, `sql_query` |
 | Models | `ml_train` (answers the model as a `kind="blob"` ref), `ml_apply` |
 | Other | `viz_session` (the Explore Data node's charts) |

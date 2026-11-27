@@ -28,6 +28,11 @@ import type {
   DashboardCreatePayload,
   DashboardUpdatePayload,
   DeltaTableHistory,
+  ExternalCatalogPayload,
+  ExternalCatalogSyncResult,
+  ExternalCatalogTestResult,
+  ExternalTableDetail,
+  ExternalTableList,
   FlowCode,
   FlowCodeFormat,
   FlowRegistration,
@@ -106,6 +111,68 @@ export class CatalogApi {
 
   static async deleteNamespace(id: number): Promise<void> {
     await axios.delete(`/catalog/namespaces/${id}`);
+  }
+
+  // ====== Catalogs kept elsewhere ======
+
+  static async testExternalCatalog(
+    body: ExternalCatalogPayload & { namespace_id?: number },
+  ): Promise<ExternalCatalogTestResult> {
+    const response = await axios.post<ExternalCatalogTestResult>("/catalog/external/test", body);
+    return response.data;
+  }
+
+  static async createExternalCatalog(body: ExternalCatalogPayload): Promise<NamespaceTree> {
+    const response = await axios.post<NamespaceTree>("/catalog/external", body);
+    return response.data;
+  }
+
+  static async updateExternalCatalog(
+    namespaceId: number,
+    body: Partial<ExternalCatalogPayload>,
+  ): Promise<NamespaceTree> {
+    const response = await axios.put<NamespaceTree>(`/catalog/external/${namespaceId}`, body);
+    return response.data;
+  }
+
+  static async deleteExternalCatalog(namespaceId: number): Promise<void> {
+    await axios.delete(`/catalog/external/${namespaceId}`);
+  }
+
+  static async syncExternalCatalog(
+    namespaceId: number,
+    force = false,
+  ): Promise<ExternalCatalogSyncResult> {
+    const response = await axios.post<ExternalCatalogSyncResult>(
+      `/catalog/external/${namespaceId}/sync`,
+      null,
+      { params: { force } },
+    );
+    return response.data;
+  }
+
+  static async getExternalTables(
+    namespaceId: number,
+    schemaId: number,
+    refresh = false,
+  ): Promise<ExternalTableList> {
+    const response = await axios.get<ExternalTableList>(
+      `/catalog/external/${namespaceId}/schemas/${schemaId}/tables`,
+      { params: { refresh } },
+    );
+    return response.data;
+  }
+
+  static async getExternalTable(
+    namespaceId: number,
+    schemaId: number,
+    name: string,
+  ): Promise<ExternalTableDetail> {
+    const response = await axios.get<ExternalTableDetail>(
+      `/catalog/external/${namespaceId}/schemas/${schemaId}/table`,
+      { params: { name } },
+    );
+    return response.data;
   }
 
   // ====== Flow Registrations ======

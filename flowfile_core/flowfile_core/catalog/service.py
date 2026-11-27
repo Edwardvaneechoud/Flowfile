@@ -45,6 +45,7 @@ from flowfile_core.catalog.serializers import (
     format_pyarrow_preview,
 )
 from flowfile_core.catalog.services.engagement import FlowEngagementService
+from flowfile_core.catalog.services.external_catalogs import ExternalCatalogService, refuse_kept_elsewhere
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import STORAGE_UNSET, NamespaceService
 from flowfile_core.catalog.services.notebooks import NotebookService
@@ -118,11 +119,19 @@ from flowfile_core.schemas.catalog_schema import (
     DashboardOut,
     DashboardUpdate,
     DeltaTableHistory,
+    ExternalCatalogCreate,
+    ExternalCatalogSyncResult,
+    ExternalCatalogTest,
+    ExternalCatalogTestResult,
+    ExternalCatalogUpdate,
+    ExternalTableDetail,
+    ExternalTableList,
     FlowRegistrationOut,
     FlowRunDetail,
     FlowRunOut,
     FlowScheduleOut,
     GlobalArtifactOut,
+    NamespaceOut,
     NamespaceTree,
     NotebookCreate,
     NotebookOut,
@@ -172,6 +181,7 @@ class CatalogService:
         # None (internal callers, electron mode, tests) is unrestricted; routes/catalog.py sets one per request.
         self.access = access
         self._namespaces = NamespaceService(repo)
+        self._external = ExternalCatalogService(repo)
         self._flows = FlowRegistrationService(repo, self._namespaces)
         self._runs = FlowRunService(repo, access=access)
         self._engagement = FlowEngagementService(repo, self._flows)
@@ -219,7 +229,9 @@ class CatalogService:
 
     def _require_namespace_writable(self, namespace_id: int | None) -> None:
         """Creating/moving items requires write access to the target namespace:
-        public, owned, or manage-granted. A use-level grant is read-only."""
+        public, owned, or manage-granted. A use-level grant is read-only. Nothing is
+        saved into a namespace another catalog keeps, whoever asks."""
+        refuse_kept_elsewhere(self.repo._db, namespace_id)
         if self._restricted and namespace_id is not None and namespace_id not in self.access.writable_namespace_ids():
             raise NotAuthorizedError(self.access.user_id or -1, "create items in this namespace")
 
@@ -230,6 +242,11 @@ class CatalogService:
         ns = self.repo.get_namespace(namespace_id)
         if ns is None or ns.owner_id != self.access.user_id:
             raise NotAuthorizedError(self.access.user_id or -1, f"{action} this catalog")
+
+    def _require_admin_on_a_server(self, action: str) -> None:
+        """Where several people share a server, only an administrator may do this; on a desktop the one user may."""
+        if self._restricted:
+            raise NotAuthorizedError(self._access_user_id(), action)
 
     def _require_use_run(self, run_id: int) -> None:
         """A run is accessible to its actor or to anyone who can use its flow."""
@@ -634,6 +651,41 @@ class CatalogService:
     def get_default_namespace_id(self) -> int | None:
         """Return the ID of the ``General > default`` schema."""
         return self._namespaces.get_default_namespace_id()
+
+    # Catalogs kept elsewhere
+
+    def test_external_catalog(self, body: ExternalCatalogTest, user_id: int) -> ExternalCatalogTestResult:
+        """Try an address and sign-in; on a server the server calls the address, so only an administrator may."""
+        self._require_admin_on_a_server("test a catalog kept elsewhere")
+        if body.namespace_id is not None:
+            self._require_namespace_owner(body.namespace_id, "test the sign-in of")
+        return self._external.test(body, user_id)
+
+    def create_external_catalog(self, body: ExternalCatalogCreate, owner_id: int) -> NamespaceOut:
+        self._require_admin_on_a_server("add a catalog kept elsewhere")
+        return self._external.namespace_out(self._external.create(body, owner_id))
+
+    def update_external_catalog(self, namespace_id: int, body: ExternalCatalogUpdate) -> NamespaceOut:
+        """Change a catalog kept elsewhere, whatever the grants say. On a server only an administrator may, as for
+        adding one: the server calls the new address. An owner who was an administrator once is not enough."""
+        self._require_admin_on_a_server("change how Flowfile reaches this catalog")
+        return self._external.namespace_out(self._external.update(namespace_id, body))
+
+    def delete_external_catalog(self, namespace_id: int) -> None:
+        self._require_namespace_owner(namespace_id, "remove")
+        self._external.delete(namespace_id)
+
+    def sync_external_catalog(self, namespace_id: int, *, force: bool = False) -> ExternalCatalogSyncResult:
+        self._require_use("catalog_namespace", namespace_id)
+        return self._external.sync(namespace_id, force=force)
+
+    def list_external_tables(self, namespace_id: int, schema_id: int, *, refresh: bool = False) -> ExternalTableList:
+        self._require_use("catalog_namespace", schema_id)
+        return self._external.tables(namespace_id, schema_id, refresh=refresh)
+
+    def get_external_table(self, namespace_id: int, schema_id: int, name: str) -> ExternalTableDetail:
+        self._require_use("catalog_namespace", schema_id)
+        return self._external.table(namespace_id, schema_id, name)
 
     # Flow registration operations
 
