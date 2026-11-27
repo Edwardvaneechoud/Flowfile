@@ -1,3 +1,4 @@
+import type { ImageFlavour, KernelInfo, KernelState } from "../../../../../types/kernel.types";
 import type { NodePythonScript, PythonScriptInput } from "../../../../../types/node.types";
 import { newCellId } from "../../../../notebook/cellOperations";
 
@@ -27,4 +28,22 @@ export const createPythonScriptNode = (flowId: number, nodeId: number): NodePyth
     cache_results: false,
     output_names: ["main"],
   };
+};
+
+const DEFAULT_KERNEL_FLAVOURS: ImageFlavour[] = ["base", "lite"];
+const DEFAULT_KERNEL_STATES: KernelState[] = ["idle", "executing", "starting", "stopped"];
+
+/**
+ * The kernel a Python Script node without one starts on: a base kernel, else a lite one,
+ * preferring a running kernel within each flavour. Kernels in error or still being created
+ * are never picked, and neither are ml, notebook or custom ones.
+ */
+export const pickDefaultKernel = (kernels: KernelInfo[]): KernelInfo | null => {
+  for (const flavour of DEFAULT_KERNEL_FLAVOURS) {
+    for (const state of DEFAULT_KERNEL_STATES) {
+      const kernel = kernels.find((k) => k.image_flavour === flavour && k.state === state);
+      if (kernel) return kernel;
+    }
+  }
+  return null;
 };
