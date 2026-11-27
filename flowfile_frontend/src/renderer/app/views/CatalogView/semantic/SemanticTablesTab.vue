@@ -91,7 +91,7 @@ import SemanticInlineText from "./SemanticInlineText.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
 import SemanticSuggestMore from "./SemanticSuggestMore.vue";
 import { rulesOf, rulesSummary } from "./dataRules";
-import { notePending, tablePageLocation } from "./semanticFormat";
+import { notePending, noteUncheckedRules, tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
 const emit = defineEmits<{ "open-tab": [tab: string] }>();
@@ -149,7 +149,9 @@ const toggle = (id: number) => {
 
 async function send(proposal: SemanticProposal) {
   try {
-    notePending(await store.propose([proposal]));
+    const stored = await store.propose([proposal]);
+    noteUncheckedRules(stored);
+    notePending(stored);
   } catch (e) {
     ElMessage.error(errorText(e, "Could not save the change"));
   }

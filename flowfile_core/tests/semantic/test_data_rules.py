@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import json
 
+import polars as pl
 import pytest
 
-from flowfile_core.catalog.semantic import service
+from flowfile_core.catalog.semantic import data_rules, service
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine import bounded
-from tests.semantic.world import World, say
+from tests.semantic.world import World, add_table, say
 
 
 def _base(ns_id: int) -> str:
@@ -191,3 +192,43 @@ def test_one_rule_the_data_refuses_does_not_hide_the_others(world: World, client
     found = _by_rule(ran.json()["tables"], world.orders_id)
     assert (found[("amount", "not_null")]["passed"], found[("amount", "not_null")]["total_rows"]) == (True, 6)
     assert found[("region", "between")]["passed"] is False and found[("region", "between")]["error"]
+
+
+def test_a_rule_is_stored_when_the_check_itself_cannot_be_made(world: World, client, monkeypatch) -> None:
+    """Only what the check proves wrong is refused: a check that breaks stores the rule with a note, and the rule
+    is judged when it runs."""
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("the checker broke")
+
+    monkeypatch.setattr(data_rules, "_check", broken)
+    stored = _propose(client, world.sales_id, _rules(world, "amount", {"check": "not_null"}))
+    assert stored.status_code == 200, stored.text
+    [fact] = stored.json()
+    assert fact["status"] == "accepted" and fact["rationale"].startswith("Not checked")
+    assert "the checker broke" not in fact["rationale"]
+
+    monkeypatch.undo()
+    ran = client.post(f"{_base(world.sales_id)}/data-rules/run")
+    assert ran.status_code == 200, ran.text
+    assert _by_rule(ran.json()["tables"], world.orders_id)[("amount", "not_null")]["passed"] is True
+
+
+def _retyped(world: World, table_id: int, dtype: str) -> None:
+    with get_db_context() as db:
+        db.query(CatalogTable).filter(CatalogTable.id == table_id).update(
+            {"schema_json": json.dumps([{"name": "n", "dtype": dtype}])}, synchronize_session=False
+        )
+        db.commit()
+    service.maybe_sync(force=True)
+
+
+def test_a_rule_on_a_column_of_a_type_flowfile_does_not_know_is_stored_unchecked(world: World, client) -> None:
+    table_id = add_table(world, world.sales_id, "odd", pl.DataFrame({"n": [1, 2, -3]}), 1)
+    _retyped(world, table_id, "long")
+    rule = {"kind": "field", "table_id": table_id, "column": "n", "attribute": "checks"}
+    stored = _propose(client, world.sales_id, {**rule, "value": [{"check": "formula", "expression": "[n] >= 0"}]})
+    assert stored.status_code == 200, stored.text
+    assert stored.json()[0]["rationale"] == "Not checked: the catalog stores no type Flowfile knows for n."
+    ran = client.post(f"{_base(world.sales_id)}/data-rules/run", json={"table_ids": [table_id]})
+    assert [(r["failed_rows"], r["total_rows"]) for r in ran.json()["tables"][0]["results"]] == [(1, 3)]

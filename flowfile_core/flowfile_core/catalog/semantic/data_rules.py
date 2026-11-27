@@ -13,6 +13,7 @@ Every ``glosslayer`` import is function-local, so core imports without it.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
@@ -20,6 +21,9 @@ from typing import Any, ClassVar
 FORMULA = "formula"
 KINDS = ("not_null", "unique", "matches", "one_of", "between", "length", FORMULA)
 ATTRIBUTE = "checks"
+UNCHECKED = "Not checked"
+
+logger = logging.getLogger(__name__)
 
 _formula_rule: Any = None
 
@@ -56,19 +60,54 @@ def register_formula_rule() -> Any:
 
 
 def table_schema(table: Any) -> dict[str, Any]:
-    """The Polars schema of a table from the columns the catalog stores for it; nothing is read."""
+    """The Polars schema of a table from the columns the catalog stores for it; nothing is read.
+
+    A column whose stored type names no Polars type (``untyped_columns``) is given as text.
+    """
     from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 
-    return {c.name: cast_str_to_polars_type(c.dtype) for c in table.columns}
+    return {c.name: cast_str_to_polars_type(c.dtype or "") for c in table.columns}
 
 
-def check_proposed(table: Any, column: str, value: Any) -> None:
-    """Refuse a proposed rules list for ``column`` that Flowfile cannot run.
+def untyped_columns(table: Any) -> list[str]:
+    """The columns whose stored type names no Polars type, so nothing can be said about a rule on them.
+
+    The catalog stores Polars' own ``str(dtype)`` for most tables; a table a kernel wrote holds Delta's names
+    (``long``, ``boolean``), which are not all Polars'.
+    """
+    from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import known_polars_type
+
+    return [c.name for c in table.columns if known_polars_type(c.dtype or "") is None]
+
+
+class Unchecked(Exception):
+    """A proposed rules list could not be checked, for a reason that is not about the rules."""
+
+
+def check_proposed(table: Any, column: str, value: Any) -> str | None:
+    """Refuse a proposed rules list for ``column`` that Flowfile cannot run; ``None`` when it was checked and holds.
+
+    Only what the check proves wrong is refused. When the check itself cannot be made (an error that is not about
+    the rules), the list is not refused: a note starting with ``UNCHECKED`` is answered for the stored fact's
+    rationale, and the rules are judged when they run.
 
     Raises:
         ValueError: A rule is of a kind Flowfile does not run, its parameters are not valid, it cannot be evaluated
             on the column's type, or a formula does not answer true or false.
     """
+    try:
+        _check(table, column, value)
+    except ValueError:
+        raise
+    except Unchecked as exc:
+        return f"{UNCHECKED}: {exc}."
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Semantic model: data rules of %s/%s stored unchecked", table.key, column, exc_info=True)
+        return f"{UNCHECKED}: the rules could not be checked against the column ({type(exc).__name__})."
+    return None
+
+
+def _check(table: Any, column: str, value: Any) -> None:
     import polars as pl
     from glosslayer import checks
 
@@ -79,6 +118,9 @@ def check_proposed(table: Any, column: str, value: Any) -> None:
     for rule in rules:
         if rule["check"] not in KINDS:
             raise ValueError(f"{rule['check']!r} is not a data rule; use one of: {', '.join(KINDS)}")
+    untyped = untyped_columns(table)
+    if untyped and (column in untyped or any(rule["check"] == FORMULA for rule in rules)):
+        raise Unchecked(f"the catalog stores no type Flowfile knows for {', '.join(untyped)}")
     schema = table_schema(table)
     frame = pl.LazyFrame(schema=schema)
     for rule in rules:

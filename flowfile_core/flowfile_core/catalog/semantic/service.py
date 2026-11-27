@@ -342,6 +342,7 @@ class SemanticModelService:
         props: list[Any] = []
         cleared: list[tuple[str, str]] = []
         metric_edits: set[str] = set()
+        unchecked: dict[str, str | None] = {}
         with _ledger_errors(self.user_id):
             for p in proposals:
                 if p.kind == "join":
@@ -366,9 +367,10 @@ class SemanticModelService:
                     if is_structural(sid, attribute):
                         raise SemanticValueError(f"{attribute!r} is read from the catalog and cannot be proposed")
                     if p.kind == "field" and attribute == data_rules.ATTRIBUTE and value:
-                        data_rules.check_proposed(t, p.column, value)
+                        unchecked[str(sid)] = data_rules.check_proposed(t, p.column, value)
                 if value is not None and value != []:
-                    props.append(Proposal(str(sid), attribute, value))
+                    note = unchecked.get(str(sid)) if attribute == data_rules.ATTRIBUTE else None
+                    props.append(Proposal(str(sid), attribute, value, comment=note))
                 elif not ai_source:
                     cleared.append((str(sid), attribute))
             for prop in props:

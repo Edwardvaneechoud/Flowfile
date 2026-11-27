@@ -1,4 +1,5 @@
 import type { DataRule, DataRuleResult } from "../../../types/semantic.types";
+import { isNumericDtype } from "../../../utils/dtype";
 
 /** One input of a rule's form; every input is text and `buildRule` reads it. */
 interface RuleField {
@@ -58,12 +59,9 @@ export const RULE_KINDS: RuleKind[] = [
   },
 ];
 
-export const isNumberType = (dtype: string | null | undefined): boolean =>
-  /^(U?Int|Float|Decimal)/.test(dtype ?? "");
-
 /** The kinds offered for a column of `dtype`. */
 export const ruleKindsFor = (dtype: string | null | undefined): RuleKind[] =>
-  RULE_KINDS.filter((k) => !k.numbersOnly || isNumberType(dtype));
+  RULE_KINDS.filter((k) => !k.numbersOnly || isNumericDtype(dtype));
 
 /** The stored rules of a `checks` fact's value; anything else is no rules. */
 export const rulesOf = (value: unknown): DataRule[] =>
@@ -186,7 +184,7 @@ export function buildRule(
       ),
     ].filter(Boolean);
     if (words.length === 0) return { error: "Give at least one value." };
-    if (!isNumberType(dtype)) return { rule: { check: kind, values: words } };
+    if (!isNumericDtype(dtype)) return { rule: { check: kind, values: words } };
     const numbers = words.map(asNumber);
     return numbers.some((n) => n === null)
       ? { error: "This column holds numbers; give numbers." }

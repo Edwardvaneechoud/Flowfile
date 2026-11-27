@@ -1900,14 +1900,14 @@ test = ["basedpyright (==1.39.9) ; python_version >= \"3.9\" and sys_platform !=
 
 [[package]]
 name = "glosslayer"
-version = "0.2.0"
+version = "0.2.1"
 description = "A catalog-agnostic semantic layer: track, review, visualize and serve Apache Ossie semantic models."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "glosslayer-0.2.0-py3-none-any.whl", hash = "sha256:cc316c4e3e8028a96f8ee78217098edf66f7e468c7c4b8c5f1799f75e40d5ad2"},
-    {file = "glosslayer-0.2.0.tar.gz", hash = "sha256:7f0a0d1c5e4512b4ee9f4784f4ca5e5974ccb080b4a5c6aa44535a910be7e923"},
+    {file = "glosslayer-0.2.1-py3-none-any.whl", hash = "sha256:2d5a018d0dc4177c3962e18edd03ce216f283334a149d31568260555fd7905fb"},
+    {file = "glosslayer-0.2.1.tar.gz", hash = "sha256:b990bb2e61d379273f470c158e464cef81d040cee4806702425feb3af2376adc"},
 ]
 
 [package.dependencies]
@@ -1925,14 +1925,14 @@ validate = ["jsonschema (>=4.18)"]
 
 [[package]]
 name = "glosslayer-flowfile"
-version = "0.2.0"
+version = "0.2.1"
 description = "Gloss plugin for the Flowfile catalog: catalog seam plus lineage-based proposals."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "glosslayer_flowfile-0.2.0-py3-none-any.whl", hash = "sha256:14c6ddb3bdcf1d5c45f80e108d539e4331caef147c60f1eeb6c2f809333fa09f"},
-    {file = "glosslayer_flowfile-0.2.0.tar.gz", hash = "sha256:5840ee2a5e5b3f32d439365e90ee02c05d14f4bc39749c842936d45406c05e0e"},
+    {file = "glosslayer_flowfile-0.2.1-py3-none-any.whl", hash = "sha256:0c6e2ffe9cca9f9df1bc7b1a66a73e787e52bea1b7cbfc9ce05dd02f327a4136"},
+    {file = "glosslayer_flowfile-0.2.1.tar.gz", hash = "sha256:411901154c83f2a9790ee864d4797b8f55b87df5147b777b3df01da87a41b83c"},
 ]
 
 [package.dependencies]
@@ -7131,4 +7131,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "3c0182b3af1e527fb6a44938d0e10895493727f220cb6f58ca8c3c8dd143241d"
+content-hash = "698fddc36fbcfd45c48e229583dc412610778eee37b518b1a9e9ac436d7e25bd"

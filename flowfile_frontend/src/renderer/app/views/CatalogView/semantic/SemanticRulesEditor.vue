@@ -2,12 +2,14 @@
   <el-popover trigger="click" placement="bottom-start" :width="320">
     <template #reference>
       <button
-        class="icon-btn rules-edit"
+        class="rules-edit"
+        :class="{ 'is-empty': rules.length === 0 }"
         type="button"
         :aria-label="`Edit data rules of ${column}`"
         data-testid="rules-edit"
       >
-        <i class="fa-solid fa-plus"></i>
+        <i class="fa-solid" :class="rules.length === 0 ? 'fa-plus' : 'fa-pen'"></i>
+        <span v-if="rules.length === 0">Add rule</span>
       </button>
     </template>
     <div class="rules-editor" data-testid="rules-editor">
@@ -123,7 +125,30 @@ const remove = (index: number) =>
 
 <style scoped>
 .rules-edit {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: var(--spacing-1);
+  height: 20px;
+  padding: 0 var(--spacing-2);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.rules-edit.is-empty {
+  padding-left: 0;
+  font-size: var(--font-size-sm);
+}
+
+.rules-edit:hover,
+.rules-edit:focus-visible {
+  border-color: var(--color-border-primary);
+  background: var(--color-background-hover);
+  color: var(--color-primary);
 }
 
 .rules-editor {

@@ -119,6 +119,16 @@ export function tableOutsideSchema(tables: string[] | undefined, schemaKey: stri
   return (tables ?? []).find((key) => !key.startsWith(`${schemaKey}.`)) ?? null;
 }
 
+/** Say that data rules were stored without their check (core marks the fact's rationale); nothing otherwise. */
+export function noteUncheckedRules(facts: SemanticFact[]) {
+  const unchecked = facts.some(
+    (f) => f.attribute === "checks" && f.rationale?.startsWith("Not checked"),
+  );
+  if (unchecked)
+    ElMessage.warning("Saved, but the rule could not be checked now. It is judged when it runs.");
+  return unchecked;
+}
+
 /** Say that a stored proposal waits for a person; nothing when all of it was accepted at once. */
 export function notePending(facts: SemanticFact[], text = "Proposed. It waits in the Review tab.") {
   const waits = facts.some((f) => f.status !== "accepted");

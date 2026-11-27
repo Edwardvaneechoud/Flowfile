@@ -87,15 +87,18 @@
               <span class="rule-chip-text">{{ describeRule(rule) }}</span>
             </span>
           </el-tooltip>
+          <SemanticRulesEditor
+            v-if="editable"
+            :column="field.name"
+            :dtype="field.dtype"
+            :rules="rulesOf(field.facts.checks?.value)"
+            @save="saveField(field.name, 'checks', $event)"
+          />
+          <span v-else-if="rulesOf(field.facts.checks?.value).length === 0" class="rules-none">
+            None
+          </span>
         </div>
         <SemanticStatusChip :fact="field.facts.checks" />
-        <SemanticRulesEditor
-          v-if="editable"
-          :column="field.name"
-          :dtype="field.dtype"
-          :rules="rulesOf(field.facts.checks?.value)"
-          @save="saveField(field.name, 'checks', $event)"
-        />
       </div>
     </div>
   </div>
@@ -222,7 +225,13 @@ const saveField = (column: string, attribute: string, value: unknown) => {
 .rule-chips {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--spacing-1);
+}
+
+.rules-none {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
 }
 
 .rule-chip {
