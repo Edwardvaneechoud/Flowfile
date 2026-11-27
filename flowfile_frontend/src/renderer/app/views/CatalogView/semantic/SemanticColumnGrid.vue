@@ -114,7 +114,7 @@ import type {
 import SemanticInlineText from "./SemanticInlineText.vue";
 import SemanticRulesEditor from "./SemanticRulesEditor.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
-import { describeRule, outcomeOf, resultText, ruleKey, rulesOf } from "./dataRules";
+import { describeRule, outcomeOf, ranText, resultText, ruleKey, rulesOf } from "./dataRules";
 import {
   CONFIDENTIALITY_HELP,
   CONFIDENTIALITY_OPTIONS,
@@ -159,9 +159,8 @@ const chipIcon = (column: string, rule: DataRule) => {
 
 const chipHint = (column: string, rule: DataRule) => {
   const found = resultOf(column, rule);
-  return found
-    ? `${describeRule(rule)} · ${resultText(found)}`
-    : `${describeRule(rule)} · not run yet`;
+  if (!found) return `${describeRule(rule)} · not run yet`;
+  return [describeRule(rule), resultText(found), ranText(found.ran_at)].filter(Boolean).join(" · ");
 };
 
 const wordsOf = (value: unknown): string =>

@@ -122,7 +122,7 @@ A data rule says what every row of a column must hold. In the **Tables** tab (an
 |---|---|
 | **Not null** | The row has a value. |
 | **Unique** | No other row has the same value. |
-| **One of** | The value is one of the values listed, separated by commas. |
+| **One of** | The value is one of the values listed, separated by commas. Not offered for date and time columns. |
 | **Pattern** | The value matches a regular expression, such as `^[A-Z]{2}$`. |
 | **Between** | A number is within a range. Either end may be left open. Offered for number columns. |
 | **Length** | The number of characters is within a range. Either end may be left open. |
@@ -136,9 +136,9 @@ A column's rules are one fact, reviewed like any other: a change waits in **Revi
 
 A table with rules shows **Run rules** in its header. A run checks the table's accepted rules against all its rows, on the compute backend, and marks each rule: green when every row passes, red with the number of failing rows when some do not (hover the rule for the count), amber when the rule could not be evaluated. The header sums it up ("3 of 4 rules pass"). Anyone who can read the model can run its rules.
 
-Results are kept, so the marks are still there when you come back, and they belong to the rules as accepted at that moment: change a rule and it shows as not run yet. Rules run only when you press **Run rules**; a write to the table does not run them.
+Results are kept, so the marks are still there when you come back, and they belong to the rules as accepted at that moment: change a rule and it shows as not run yet. The header and each rule's hover say when the rules last ran; a result is not cleared when the table is written, so run the rules again after the data changes. Rules run only when you press **Run rules**; a write to the table does not run them.
 
-A virtual table is skipped: it holds no stored rows, and checking it would run what produces it.
+A virtual table is skipped: it holds no stored rows, and checking it would run what produces it. A table on this server's disk is skipped too when the compute backend does not read this server's files, as with a [worker on another host](../../deployment/remote-worker.md): its catalog tables must be on object storage.
 
 ---
 
@@ -257,7 +257,7 @@ The model reads the question and writes a query; Flowfile checks it against the 
 - A metric belongs to **one table**. Its formula can read columns of tables joined many to one, never of a table with many rows per row of its own (a metric on customers cannot use a column of orders).
 - A join is followed only from the many side to the one side; Flowfile measures the direction when the join is stored but does not check types of the key columns.
 - Confidentiality keeps column values from AI, not from people with access to the schema.
-- Data rules are per column and run on demand. There are no rules on a whole table, no failing-row samples and no date range in **Between** (use a **Formula** rule). **Unique** counts every copy of a repeated value as failing. Where review is on, two people changing the same column's rules replace each other's list, and removing a column's last rule takes effect at once.
+- Data rules are per column and run on demand. There are no rules on a whole table, no failing-row samples, and no date range in **Between** or dates in **One of** (use a **Formula** rule). **Unique** counts every copy of a repeated value as failing. Where review is on, two people changing the same column's rules replace each other's list, and removing a column's last rule takes effect at once.
 - A saved flow cannot read another schema's table, so a query that reaches across schemas can be run but not kept as a flow.
 - Rule-suggested joins from a schema's model stay within that schema; **Suggest joins** on the catalog's page also proposes joins across its schemas. An AI suggestion may join to a table of another schema only when a join already reaches it.
 - The checks on a specific suggestion catch a wrong table, column, type or direction, not a wrong meaning: a well-formed metric with a misleading name passes and is caught only in Review.

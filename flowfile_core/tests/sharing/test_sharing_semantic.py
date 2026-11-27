@@ -594,9 +594,9 @@ def test_data_rules_run_and_answer_only_for_tables_the_reader_may_open(users, cl
     scanned: list[int] = []
     real = CatalogService.stored_table_plan
 
-    def record(self, table_id, user_id):
+    def record(self, table_id, user_id, backend=None):
         scanned.append(table_id)
-        return real(self, table_id, user_id)
+        return real(self, table_id, user_id, backend)
 
     monkeypatch.setattr(CatalogService, "stored_table_plan", record)
     run, results = f"{_base(world.sales_id)}/data-rules/run", f"{_base(world.sales_id)}/data-rules/results"

@@ -1,5 +1,5 @@
 import type { DataRule, DataRuleResult } from "../../../types/semantic.types";
-import { isNumericDtype } from "../../../utils/dtype";
+import { isBooleanDtype, isNumericDtype, isTemporalDtype } from "../../../utils/dtype";
 
 /** One input of a rule's form; every input is text and `buildRule` reads it. */
 interface RuleField {
@@ -8,13 +8,16 @@ interface RuleField {
   placeholder: string;
 }
 
-/** A kind of data rule a column can hold: `kind` is what the ledger stores as `check`. */
+type Dtype = string | null | undefined;
+
+/** A kind of data rule a column can hold: `kind` is what the ledger stores as `check`; `fits` says for which
+ * column types it is offered (every type when left out). */
 export interface RuleKind {
   kind: string;
   label: string;
   hint: string;
   fields: RuleField[];
-  numbersOnly?: boolean;
+  fits?: (dtype: Dtype) => boolean;
 }
 
 const RANGE: RuleField[] = [
@@ -31,6 +34,7 @@ export const RULE_KINDS: RuleKind[] = [
     label: "One of",
     hint: "Only the values listed, separated by commas.",
     fields: [{ key: "values", label: "Values", placeholder: "open, shipped, cancelled" }],
+    fits: (dtype) => !isTemporalDtype(dtype),
   },
   {
     kind: "matches",
@@ -43,7 +47,7 @@ export const RULE_KINDS: RuleKind[] = [
     label: "Between",
     hint: "A number within a range; either end may be left open.",
     fields: RANGE,
-    numbersOnly: true,
+    fits: isNumericDtype,
   },
   {
     kind: "length",
@@ -60,8 +64,8 @@ export const RULE_KINDS: RuleKind[] = [
 ];
 
 /** The kinds offered for a column of `dtype`. */
-export const ruleKindsFor = (dtype: string | null | undefined): RuleKind[] =>
-  RULE_KINDS.filter((k) => !k.numbersOnly || isNumericDtype(dtype));
+export const ruleKindsFor = (dtype: Dtype): RuleKind[] =>
+  RULE_KINDS.filter((k) => !k.fits || k.fits(dtype));
 
 /** The stored rules of a `checks` fact's value; anything else is no rules. */
 export const rulesOf = (value: unknown): DataRule[] =>
@@ -140,6 +144,18 @@ export function resultText(result: DataRuleResult): string {
   return `${result.failed_rows.toLocaleString()} of ${rows(result.total_rows)} fail`;
 }
 
+/** When a table's results were measured (they come from one run), as the server gave it; null when none ran. */
+export const lastRun = (results: Record<string, DataRuleResult> | undefined): string | null =>
+  Object.values(results ?? {})
+    .map((r) => r.ran_at)
+    .filter((at): at is string => !!at)
+    .sort()
+    .at(-1) ?? null;
+
+/** "run 27/11/2026, 14:02:10" for a moment the server gave; nothing without one. */
+export const ranText = (at: string | null | undefined): string =>
+  at ? `run ${new Date(at).toLocaleString()}` : "";
+
 /** A table's rules against its results: "3 of 4 rules pass", or that they did not run yet. */
 export function rulesSummary(
   rules: { column: string; rule: DataRule }[],
@@ -160,11 +176,13 @@ const asNumber = (text: string): number | null => {
   return text.trim() !== "" && Number.isFinite(n) ? n : null;
 };
 
+const TRUE_OR_FALSE: Record<string, boolean> = { true: true, false: false };
+
 /** The rule a filled-in form describes, or what is wrong with it. */
 export function buildRule(
   kind: string,
   draft: Record<string, string>,
-  dtype: string | null | undefined,
+  dtype: Dtype,
 ): { rule: DataRule } | { error: string } {
   const text = (key: string) => (draft[key] ?? "").trim();
   if (kind === "matches")
@@ -184,6 +202,12 @@ export function buildRule(
       ),
     ].filter(Boolean);
     if (words.length === 0) return { error: "Give at least one value." };
+    if (isBooleanDtype(dtype)) {
+      const answers = words.map((w) => TRUE_OR_FALSE[w.toLowerCase()]);
+      return answers.some((a) => a === undefined)
+        ? { error: "This column holds true or false; give true or false." }
+        : { rule: { check: kind, values: [...new Set(answers)] } };
+    }
     if (!isNumericDtype(dtype)) return { rule: { check: kind, values: words } };
     const numbers = words.map(asNumber);
     return numbers.some((n) => n === null)

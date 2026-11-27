@@ -39,6 +39,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   const rulesRunning = ref<number[]>([]);
 
   let loadToken = 0;
+  let rulesRuns = 0;
   let joinCheckRunning = false;
   let joinCheckAgain = false;
 
@@ -182,9 +183,11 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   async function loadRuleResults() {
     const id = namespaceId.value;
     if (id === null) return;
+    const runsBefore = rulesRuns;
     try {
       const tables = await SemanticModelApi.getDataRuleResults(id);
-      if (namespaceId.value !== id) return;
+      // a run that answered meanwhile is newer than what was read
+      if (namespaceId.value !== id || rulesRuns !== runsBefore) return;
       ruleResults.value = Object.fromEntries(tables.map((t) => [t.table_id, keyed(t)]));
     } catch {
       // the rules then show without a result
@@ -197,6 +200,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     rulesRunning.value = [...rulesRunning.value, ...tableIds];
     try {
       const run = await SemanticModelApi.runDataRules(id, tableIds);
+      rulesRuns += 1;
       if (namespaceId.value === id) {
         const next = { ...ruleResults.value };
         for (const table of run.tables) if (!table.skipped) next[table.table_id] = keyed(table);

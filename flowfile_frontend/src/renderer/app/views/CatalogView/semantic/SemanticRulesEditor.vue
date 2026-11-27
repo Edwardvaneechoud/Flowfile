@@ -62,7 +62,10 @@
           Add rule
         </el-button>
       </div>
-      <p class="note">A row without a value passes every rule but Not null.</p>
+      <p class="note">
+        A row without a value passes every rule but Not null; a formula fails a row it has no answer
+        for.
+      </p>
     </div>
   </el-popover>
 </template>

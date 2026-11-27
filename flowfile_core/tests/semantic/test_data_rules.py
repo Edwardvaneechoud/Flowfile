@@ -50,6 +50,10 @@ def _by_rule(tables: list[dict], table_id: int) -> dict[tuple[str, str], dict]:
         ("amount", {"check": "formula", "expression": "[nope] > 1"}, "cannot run on column 'amount'"),
         ("amount", {"check": "formula", "expression": "[amount] + 1"}, "must answer true or false"),
         ("amount", {"check": "formula", "expression": " "}, "formula needs an expression"),
+        ("amount", {"check": "between", "min": 9, "max": 1}, "min to be at most max"),
+        ("region", {"check": "one_of", "values": "West"}, "one_of"),
+        ("amount", 1, "each with its 'check'"),
+        ("amount", "not_null", "each with its 'check'"),
     ],
 )
 def test_a_rule_that_cannot_work_is_refused_and_nothing_is_stored(world: World, client, column, rule, says) -> None:
@@ -108,6 +112,30 @@ def test_a_formula_rule_is_one_line_that_is_true_for_a_passing_row(world: World,
     assert (result["rule"], result["passed"], result["failed_rows"], result["total_rows"]) == (formula, False, 1, 6)
 
 
+def test_one_of_takes_whole_numbers_on_a_float_column(world: World, client) -> None:
+    rule = {"check": "one_of", "values": [5, 3, 8]}
+    stored = _propose(client, world.sales_id, _rules(world, "amount", rule))
+    assert stored.status_code == 200 and stored.json()[0]["rationale"] is None, stored.text
+    ran = client.post(f"{_base(world.sales_id)}/data-rules/run")
+    [result] = ran.json()["tables"][0]["results"]
+    assert (result["error"], result["failed_rows"], result["total_rows"]) == (None, 3, 6)
+
+
+def test_a_rules_error_quotes_no_value_of_the_data_and_no_path(world: World, client) -> None:
+    """What an engine says about a rule it cannot evaluate is logged and shown, so it must not carry rows."""
+    formula = {"check": "formula", "expression": "to_integer([region]) > 0"}
+    assert _propose(client, world.sales_id, _rules(world, "region", formula)).status_code == 200
+    ran = client.post(f"{_base(world.sales_id)}/data-rules/run")
+    [result] = ran.json()["tables"][0]["results"]
+    assert result["passed"] is False and "conversion" in result["error"], result
+    assert not any(value in result["error"] for value in ("West", "East", "North", "["))
+    [logged] = client.get(f"{_base(world.sales_id)}/data-rules/results").json()[0]["results"]
+    assert logged["error"] == result["error"]
+    assert data_rules._safe_reason("No such file (os error 2): /srv/store/catalog/t1/part-0.parquet") == (
+        "No such file (os error 2): part-0.parquet"
+    )
+
+
 def test_results_are_kept_only_for_the_rules_accepted_now(world: World, client) -> None:
     between, not_null = {"check": "between", "min": 0, "max": 8}, {"check": "not_null"}
     assert _propose(client, world.sales_id, _rules(world, "amount", between, not_null)).status_code == 200
@@ -157,6 +185,23 @@ def test_a_virtual_table_is_skipped_not_resolved(world: World, client) -> None:
     assert client.get(f"{_base(world.sales_id)}/data-rules/results").json() == []
 
 
+def test_a_table_on_local_disk_is_skipped_for_a_backend_that_does_not_read_it(
+    world: World, client, monkeypatch
+) -> None:
+    """A worker on another host reads catalog tables from object storage only, so no plan of a local path is sent."""
+    from flowfile_core.catalog.services import virtual_tables
+
+    assert _propose(client, world.sales_id, _rules(world, "amount", {"check": "not_null"})).status_code == 200
+    sent: list[object] = []
+    monkeypatch.setattr(virtual_tables, "reads_core_disk", lambda backend: False)
+    monkeypatch.setattr(bounded, "single_row", lambda *args, **kwargs: sent.append(args))
+    ran = client.post(f"{_base(world.sales_id)}/data-rules/run")
+    assert ran.status_code == 200, ran.text
+    [table] = ran.json()["tables"]
+    assert table["results"] == [] and "is on local disk, not object storage" in table["skipped"]
+    assert ran.json()["run_id"] is None and sent == []
+
+
 def test_a_stored_rule_flowfile_does_not_run_is_an_error_and_is_never_evaluated(world: World, client) -> None:
     say(
         world.field("orders", "amount"),
@@ -192,6 +237,36 @@ def test_one_rule_the_data_refuses_does_not_hide_the_others(world: World, client
     found = _by_rule(ran.json()["tables"], world.orders_id)
     assert (found[("amount", "not_null")]["passed"], found[("amount", "not_null")]["total_rows"]) == (True, 6)
     assert found[("region", "between")]["passed"] is False and found[("region", "between")]["error"]
+
+
+def test_a_formula_rule_is_parsed_and_never_run_as_python(world: World, client, tmp_path) -> None:
+    """The attempts of ``flowfile_wasm``'s ``test_filter_advanced_expr_does_not_evaluate_python``, as a rule: core
+    builds a formula rule's expression itself, when it is proposed and again when it runs."""
+    canary = tmp_path / "canary"
+    hostile = [
+        f'__import__("os").system("touch {canary}")',
+        f'open("{canary}", "w")',
+        f'[amount] > 1 and open("{canary}", "w")',
+        f'[region] = "x\\" + open(\\"{canary}\\", \\"w\\") + \\"y"',
+        f'[region] = \'x" + open("{canary}", "w") + "y\'',
+    ]
+    for expression in hostile:
+        rule = {"check": "formula", "expression": expression}
+        answer = _propose(client, world.sales_id, _rules(world, "amount", rule))
+        assert answer.status_code in (200, 422), answer.text
+        say(world.field("orders", "amount"), "checks", [rule])
+        assert client.post(f"{_base(world.sales_id)}/data-rules/run").status_code == 200
+        assert not canary.exists(), expression
+
+
+def test_a_value_error_that_is_not_about_the_rules_does_not_refuse_them(world: World, client, monkeypatch) -> None:
+    def broken(_table):
+        raise ValueError("the stored schema could not be read")
+
+    monkeypatch.setattr(data_rules, "table_schema", broken)
+    stored = _propose(client, world.sales_id, _rules(world, "amount", {"check": "not_null"}))
+    assert stored.status_code == 200, stored.text
+    assert stored.json()[0]["rationale"].startswith("Not checked")
 
 
 def test_a_rule_is_stored_when_the_check_itself_cannot_be_made(world: World, client, monkeypatch) -> None:

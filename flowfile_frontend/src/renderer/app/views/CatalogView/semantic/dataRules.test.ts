@@ -4,6 +4,8 @@ import {
   buildRule,
   describeRule,
   describeRules,
+  lastRun,
+  ranText,
   resultText,
   ruleKey,
   ruleKindsFor,
@@ -57,6 +59,20 @@ describe("ruleKindsFor", () => {
     expect(ruleKindsFor("String").map((k) => k.kind)).not.toContain("between");
     expect(ruleKindsFor("String").map((k) => k.kind)).toContain("length");
   });
+
+  it("knows the number types a kernel-written table stores", () => {
+    for (const dtype of ["long", "double", "short", "integer"])
+      expect(ruleKindsFor(dtype).map((k) => k.kind)).toContain("between");
+    expect(buildRule("one_of", { values: "1, 2" }, "long")).toEqual({
+      rule: { check: "one_of", values: [1, 2] },
+    });
+  });
+
+  it("offers a list of values where one can be written", () => {
+    for (const dtype of ["Date", "Datetime(time_unit='us', time_zone=None)", "timestamp"])
+      expect(ruleKindsFor(dtype).map((k) => k.kind)).not.toContain("one_of");
+    expect(ruleKindsFor("Boolean").map((k) => k.kind)).toContain("one_of");
+  });
 });
 
 describe("buildRule", () => {
@@ -74,6 +90,9 @@ describe("buildRule", () => {
     expect(buildRule("one_of", { values: "1, 2" }, "Int64")).toEqual({
       rule: { check: "one_of", values: [1, 2] },
     });
+    expect(buildRule("one_of", { values: "True, true" }, "Boolean")).toEqual({
+      rule: { check: "one_of", values: [true] },
+    });
     expect(buildRule("formula", { expression: " [amount] >= 0 " }, "Float64")).toEqual({
       rule: { check: "formula", expression: "[amount] >= 0" },
     });
@@ -90,6 +109,9 @@ describe("buildRule", () => {
     });
     expect(buildRule("one_of", { values: "a, 2" }, "Int64")).toEqual({
       error: "This column holds numbers; give numbers.",
+    });
+    expect(buildRule("one_of", { values: "yes" }, "boolean")).toEqual({
+      error: "This column holds true or false; give true or false.",
     });
   });
 });
@@ -110,6 +132,16 @@ describe("results", () => {
     expect(resultText(result({ passed: false, error: "no such column" }))).toBe(
       "Could not run: no such column",
     );
+  });
+
+  it("says when a table's results were measured", () => {
+    const first = result({ ran_at: "2026-11-27T10:00:00+00:00" });
+    const later = result({ ran_at: "2026-11-27T12:00:00+00:00" });
+    expect(lastRun({ a: first, b: later, c: result({}) })).toBe("2026-11-27T12:00:00+00:00");
+    expect(lastRun({ c: result({}) })).toBeNull();
+    expect(lastRun(undefined)).toBeNull();
+    expect(ranText(null)).toBe("");
+    expect(ranText("2026-11-27T12:00:00+00:00")).toMatch(/^run .*2026/);
   });
 
   it("sums a table's rules up", () => {

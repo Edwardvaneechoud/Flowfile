@@ -14,6 +14,7 @@ Every ``glosslayer`` import is function-local, so core imports without it.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
@@ -24,6 +25,8 @@ ATTRIBUTE = "checks"
 UNCHECKED = "Not checked"
 
 logger = logging.getLogger(__name__)
+
+_LISTED_VALUES = re.compile(r"( values): \[.*$")
 
 _formula_rule: Any = None
 
@@ -84,20 +87,24 @@ class Unchecked(Exception):
     """A proposed rules list could not be checked, for a reason that is not about the rules."""
 
 
+class Refused(ValueError):
+    """A proposed rules list the check proved wrong; its message says which rule and why."""
+
+
 def check_proposed(table: Any, column: str, value: Any) -> str | None:
     """Refuse a proposed rules list for ``column`` that Flowfile cannot run; ``None`` when it was checked and holds.
 
-    Only what the check proves wrong is refused. When the check itself cannot be made (an error that is not about
-    the rules), the list is not refused: a note starting with ``UNCHECKED`` is answered for the stored fact's
-    rationale, and the rules are judged when they run.
+    Only what the check proves wrong is refused. When the check itself cannot be made (any other error, a
+    ``ValueError`` that is not about the rules included), the list is not refused: a note starting with
+    ``UNCHECKED`` is answered for the stored fact's rationale, and the rules are judged when they run.
 
     Raises:
-        ValueError: A rule is of a kind Flowfile does not run, its parameters are not valid, it cannot be evaluated
-            on the column's type, or a formula does not answer true or false.
+        Refused: A rule is of a kind Flowfile does not run, its parameters are not valid, it cannot be evaluated on
+            the column's type, or a formula does not answer true or false. A ``ValueError``, so a 422.
     """
     try:
         _check(table, column, value)
-    except ValueError:
+    except Refused:
         raise
     except Unchecked as exc:
         return f"{UNCHECKED}: {exc}."
@@ -112,12 +119,15 @@ def _check(table: Any, column: str, value: Any) -> None:
     from glosslayer import checks
 
     register_formula_rule()
-    if not isinstance(value, list):
-        raise ValueError("Data rules must be a list")
-    rules = checks.validate(value)
+    if not isinstance(value, list) or not all(isinstance(rule, dict) for rule in value):
+        raise Refused("Data rules must be a list of rules, each with its 'check'")
+    try:
+        rules = checks.validate(value)
+    except ValueError as exc:
+        raise Refused(str(exc)) from None
     for rule in rules:
         if rule["check"] not in KINDS:
-            raise ValueError(f"{rule['check']!r} is not a data rule; use one of: {', '.join(KINDS)}")
+            raise Refused(f"{rule['check']!r} is not a data rule; use one of: {', '.join(KINDS)}")
     untyped = untyped_columns(table)
     if untyped and (column in untyped or any(rule["check"] == FORMULA for rule in rules)):
         raise Unchecked(f"the catalog stores no type Flowfile knows for {', '.join(untyped)}")
@@ -127,9 +137,10 @@ def _check(table: Any, column: str, value: Any) -> None:
         if rule["check"] == FORMULA:
             _require_true_or_false(frame, rule)
     plan = checks.plan({column: [(rule, None) for rule in rules]}, table.key, frame, schema=schema)
+    # collected here: the frame is the stored columns with no rows, so no data is read
     for result in checks.run_plan(plan, lambda planned: planned.collect()):
         if result.error:
-            raise ValueError(f"The {result.check['check']} rule cannot run on column {column!r}: {result.error}")
+            raise Refused(f"The {result.check['check']} rule cannot run on column {column!r}: {result.error}")
 
 
 def _require_true_or_false(frame: Any, rule: dict[str, Any]) -> None:
@@ -141,9 +152,10 @@ def _require_true_or_false(frame: Any, rule: dict[str, Any]) -> None:
         answer = frame.select(register_formula_rule()(**{"expression": rule["expression"]}).polars("").alias("answer"))
         dtype = answer.collect_schema()["answer"]
     except Exception:  # noqa: BLE001
+        logger.debug("Semantic model: formula rule %r does not resolve; left to the dry run", rule["expression"])
         return
     if dtype != pl.Boolean:
-        raise ValueError(f"A formula rule must answer true or false; {rule['expression']!r} answers {dtype}")
+        raise Refused(f"A formula rule must answer true or false; {rule['expression']!r} answers {dtype}")
 
 
 @dataclass
@@ -169,11 +181,20 @@ def _runs(rule: dict[str, Any]) -> bool:
     return rule["check"] in KINDS
 
 
+def _safe_reason(reason: str) -> str:
+    """Why a rule could not run, without what an engine quotes of the data and the server: the values a failed
+    conversion lists are left out and a path is cut to its last part."""
+    from flowfile_core.catalog.services.virtual_tables import _scrub_paths_not_urls
+
+    return _scrub_paths_not_urls(_LISTED_VALUES.sub(r"\1", reason))
+
+
 def run(view: Any, catalog: Any, tables: Iterable[Any], user_id: int | None) -> list[TableRun]:
     """Run the accepted rules of each of ``tables`` on the compute backend, one plan per table.
 
-    A table with no rules is left out; one that holds no stored rows (a virtual table) is answered as skipped. A
-    stored rule of a kind Flowfile does not run is answered with an error and never evaluated.
+    A table with no rules is left out; one that holds no stored rows (a virtual table), or that is on this server's
+    disk while the backend does not read it, is answered as skipped. A stored rule of a kind Flowfile does not run
+    is answered with an error and never evaluated.
 
     Raises:
         ComputeError: The backend could not be reached, or is on another version.
@@ -201,16 +222,19 @@ def run(view: Any, catalog: Any, tables: Iterable[Any], user_id: int | None) -> 
         if not rules:
             continue
         try:
-            frame = catalog.stored_table_plan(table.uid, user_id)
+            frame = catalog.stored_table_plan(table.uid, user_id, backend)
         except ValueError as exc:
             runs.append(TableRun(table, skipped=str(exc)))
             continue
         runnable = {col: [(rule, origin) for rule, origin in found if _runs(rule)] for col, found in rules.items()}
-        plan = checks.plan(runnable, table.key, frame, schema=table_schema(table))
+        plan = checks.plan(runnable, table.key, frame, schema=[c.name for c in table.columns])
         try:
             results = checks.run_plan(plan, collect)
         except EngineUnavailable as exc:
             raise exc.__cause__ or exc from None
+        for result in results:
+            if result.error:
+                result.error = _safe_reason(result.error)
         total = results[0].total_rows if results else 0
         for col, found in rules.items():
             subject = str(SubjectId.for_field(table.key, col))

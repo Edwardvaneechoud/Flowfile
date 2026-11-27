@@ -33,7 +33,7 @@
         <span class="table-count">{{ table.fields.length }} columns</span>
         <template v-if="rulesIn(table).length > 0">
           <span class="rule-summary" :data-testid="`rules-summary-${table.table_id}`">
-            {{ rulesSummary(rulesIn(table), store.ruleResults[table.table_id]) }}
+            {{ summaryOf(table) }}
           </span>
           <el-button
             size="small"
@@ -90,7 +90,7 @@ import SemanticColumnGrid from "./SemanticColumnGrid.vue";
 import SemanticInlineText from "./SemanticInlineText.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
 import SemanticSuggestMore from "./SemanticSuggestMore.vue";
-import { rulesOf, rulesSummary } from "./dataRules";
+import { lastRun, ranText, ruleKey, rulesOf, rulesSummary } from "./dataRules";
 import { notePending, noteUncheckedRules, tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
@@ -128,6 +128,15 @@ const rulesIn = (table: SemanticTable) =>
   table.fields.flatMap((f) =>
     rulesOf(f.facts.checks?.value).map((rule) => ({ column: f.name, rule })),
   );
+
+const summaryOf = (table: SemanticTable) => {
+  const results = store.ruleResults[table.table_id];
+  const shown = rulesIn(table);
+  const ran = shown.some((r) => results?.[ruleKey(r.column, r.rule)])
+    ? ranText(lastRun(results))
+    : "";
+  return [rulesSummary(shown, results), ran].filter(Boolean).join(" · ");
+};
 
 async function runRules(table: SemanticTable) {
   try {
