@@ -270,6 +270,87 @@ def test_a_catalog_table_on_object_storage_is_read_with_the_workers_credentials_
             assert 1 in failed_nodes(run), failed_nodes(run)
 
 
+RULES = {
+    "amount": [{"check": "between", "min": 0, "max": 40}, {"check": "formula", "expression": "[amount] > 0"}],
+    "region": [{"check": "one_of", "values": ["eu"]}],
+}
+RULE_COUNTS = {
+    ("amount", "between"): (None, 2, 6),
+    ("amount", "formula"): (None, 0, 6),
+    ("region", "one_of"): (None, 3, 6),
+}
+
+
+def _run_rules(services: Services, schema_id: int, table_path: str) -> dict:
+    """Register the customers table at ``table_path``, accept ``RULES`` on it and answer its part of a run."""
+    table = services.post(
+        "/catalog/tables/from-data",
+        {
+            "name": "customers",
+            "table_path": table_path,
+            "namespace_id": schema_id,
+            "schema_columns": [{"name": name, "dtype": dtype} for name, dtype in CUSTOMER_COLUMNS],
+            "row_count": len(CUSTOMERS),
+            "column_count": len(CUSTOMER_COLUMNS),
+            "size_bytes": 1,
+        },
+    )
+    model = f"/catalog/namespaces/{schema_id}/semantic-model"
+    proposals = [
+        {"kind": "field", "table_id": table["id"], "column": column, "attribute": "checks", "value": value}
+        for column, value in RULES.items()
+    ]
+    stored = services.post(f"{model}/proposals", {"proposals": proposals})
+    assert {fact["status"] for fact in stored} == {"accepted"}, stored
+    [answered] = services.post(f"{model}/data-rules/run", {"table_ids": [table["id"]]})["tables"]
+    return answered
+
+
+def _counts(answered: dict) -> dict:
+    return {
+        (r["column"], r["rule"]["check"]): (r["error"], r["failed_rows"], r["total_rows"]) for r in answered["results"]
+    }
+
+
+@pytest.mark.parametrize("local_files", ["1", "0"])
+def test_data_rules_of_a_table_on_local_disk_run_only_on_a_worker_that_reads_it(tmp_path, local_files):
+    """A worker that reads this host's files counts the rules itself; to one that does not, no plan is sent."""
+    with _running(tmp_path, protocol="1", FLOWFILE_WORKER_LOCAL_FILES=local_files) as services:
+        table_path = (services.storage["core"] / "catalog_tables" / "customers").resolve()
+        pl.DataFrame(CUSTOMERS).write_delta(str(table_path))
+        catalog = services.post("/catalog/namespaces", {"name": "local"})
+        schema = services.post("/catalog/namespaces", {"name": "sales", "parent_id": catalog["id"]})
+
+        answered = _run_rules(services, schema["id"], str(table_path))
+
+        if local_files == "1":
+            assert answered["skipped"] is None and _counts(answered) == RULE_COUNTS, answered
+        else:
+            assert answered["results"] == [], answered
+            assert "is on local disk, not object storage" in answered["skipped"], answered
+        assert list((services.storage["core"] / "cache").iterdir()) == []
+
+
+def test_data_rules_of_a_catalog_table_on_object_storage_run_on_the_worker(tmp_path, minio_prefix):
+    """Run rules sends one plan to the worker, which alone holds MinIO's keys, and core reads back one row of counts."""
+    storage_uri = f"s3://{MINIO_BUCKET}/{minio_prefix}/catalog"
+    table_path = f"{storage_uri}/customers"
+    pl.DataFrame(CUSTOMERS).write_delta(table_path, storage_options=MINIO_OPTIONS)
+    keys = {"AWS_ACCESS_KEY_ID": s3.MINIO_ACCESS_KEY, "AWS_SECRET_ACCESS_KEY": s3.MINIO_SECRET_KEY}
+    with _running(tmp_path, protocol="1", worker_env=keys, AWS_EC2_METADATA_DISABLED="true") as services:
+        _environment_connection(services)
+        catalog = services.post(
+            "/catalog/namespaces",
+            {"name": "minio", "storage_uri": storage_uri, "storage_connection_name": ENVIRONMENT_CONNECTION},
+        )
+        schema = services.post("/catalog/namespaces", {"name": "sales", "parent_id": catalog["id"]})
+
+        answered = _run_rules(services, schema["id"], table_path)
+
+        assert answered["skipped"] is None and _counts(answered) == RULE_COUNTS, answered
+        assert list((services.storage["core"] / "cache").iterdir()) == []
+
+
 @pytest.mark.parametrize("protocol", ["1", "0"])
 def test_cloud_reads_core_cannot_resolve_use_the_workers_identity_only(tmp_path, protocol, minio_prefix):
     """A read with no saved connection and a directory read under an ``env_vars`` connection; only the worker has keys.

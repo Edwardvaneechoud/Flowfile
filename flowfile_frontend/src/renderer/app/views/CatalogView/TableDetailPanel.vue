@@ -676,7 +676,7 @@ import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { isHubRow } from "./hubRows";
 import SemanticColumnGrid from "./semantic/SemanticColumnGrid.vue";
-import { notePending } from "./semantic/semanticFormat";
+import { notePending, noteUncheckedRules } from "./semantic/semanticFormat";
 import { useTableSemantics } from "../../composables/useTableSemantics";
 import { recallHistoryRows, rememberHistoryRows } from "./tableHistoryRows";
 
@@ -736,7 +736,9 @@ const { semanticTable, propose: proposeFacts } = useTableSemantics(computed(() =
 
 async function saveProposal(proposal: SemanticProposal) {
   try {
-    notePending(await proposeFacts([proposal]));
+    const stored = await proposeFacts([proposal]);
+    noteUncheckedRules(stored);
+    notePending(stored);
   } catch (e) {
     ElMessage.error(errorText(e, "Could not save the change"));
   }

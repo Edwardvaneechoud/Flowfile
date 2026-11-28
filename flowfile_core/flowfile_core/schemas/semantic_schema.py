@@ -251,6 +251,42 @@ class JoinCheckOut(BaseModel):
     message: str
 
 
+class DataRuleResultOut(BaseModel):
+    """One data rule of one column measured against the table's rows. ``rule`` is the stored rule
+    (``{"check": "between", "min": 0}``); ``error`` is set when it could not be evaluated, and it then did not pass."""
+
+    table_id: int
+    column: str
+    rule: dict[str, Any]
+    passed: bool
+    failed_rows: int
+    total_rows: int
+    origin: str | None = None
+    error: str | None = None
+    ran_at: datetime | None = None
+
+
+class DataRuleTableOut(BaseModel):
+    """A table's results from one run; ``skipped`` says why a table with rules was not run."""
+
+    table_id: int
+    skipped: str | None = None
+    results: list[DataRuleResultOut] = Field(default_factory=list)
+
+
+class DataRulesRunIn(BaseModel):
+    """The tables to run; every table of the model when left out."""
+
+    table_ids: list[int] | None = None
+
+
+class DataRulesRunOut(BaseModel):
+    """A run of data rules; ``run_id`` is ``None`` when no rule ran."""
+
+    run_id: str | None = None
+    tables: list[DataRuleTableOut] = Field(default_factory=list)
+
+
 class SemanticEventOut(BaseModel):
     seq: int | None = None
     id: str

@@ -2,7 +2,7 @@
   <div class="function-editor-root" :class="{ 'is-auto-height': autoHeight }" :style="rootStyle">
     <codemirror
       v-model="code"
-      placeholder="Code goes here..."
+      :placeholder="props.placeholder"
       :style="autoHeight ? undefined : { height: props.height }"
       :autofocus="props.autofocus"
       :indent-with-tab="true"
@@ -56,6 +56,7 @@ interface Props {
   height?: string;
   minHeight?: string;
   maxHeight?: string;
+  placeholder?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -67,6 +68,7 @@ const props = withDefaults(defineProps<Props>(), {
   height: "250px",
   minHeight: "48px",
   maxHeight: "160px",
+  placeholder: "Code goes here...",
 });
 
 const autoHeight = computed(() => props.height === "auto");

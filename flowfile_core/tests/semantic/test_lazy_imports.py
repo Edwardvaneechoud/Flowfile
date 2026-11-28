@@ -19,6 +19,7 @@ MODULES = [
     "flowfile_core.catalog.semantic.service",
     "flowfile_core.catalog.semantic.confidentiality",
     "flowfile_core.catalog.semantic.activity",
+    "flowfile_core.catalog.semantic.data_rules",
     "flowfile_core.routes.catalog_semantic",
     "flowfile_core.schemas.semantic_schema",
     "flowfile_core.ai.semantic_routes",

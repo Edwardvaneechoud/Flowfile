@@ -108,19 +108,22 @@ def safe_eval_pl_type(type_string: str, *, bare_names: bool = True):
 dtype_to_pl_str = {k: v.__name__ for k, v in dtype_to_pl.items()}
 
 
-def get_polars_type(dtype: str):
-    if "pl." in dtype:
-        try:
-            return safe_eval_pl_type(dtype)
-        except Exception:
-            return pl.String
-    pl_datetype = dtype_to_pl.get(dtype.lower())
-    if pl_datetype is not None:
-        return pl_datetype
+def known_polars_type(dtype: str):
+    """The Polars type ``dtype`` names, or ``None`` when it names none."""
+    if "pl." not in dtype:
+        pl_datetype = dtype_to_pl.get(dtype.lower())
+        if pl_datetype is not None:
+            return pl_datetype
     try:
         return safe_eval_pl_type(dtype)
     except Exception:
-        return pl.String  # Fallback to String if evaluation fails
+        return None
+
+
+def get_polars_type(dtype: str):
+    """As ``known_polars_type``, with String for a name that is no Polars type."""
+    pl_datetype = known_polars_type(dtype)
+    return pl.String if pl_datetype is None else pl_datetype
 
 
 def cast_str_to_polars_type(dtype: str) -> pl.DataType:
