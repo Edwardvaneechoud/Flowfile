@@ -98,6 +98,9 @@ def delete_consumer(db: Session, consumer: db_models.ApiConsumer) -> None:
     db.query(db_models.ApiConsumerEndpoint).filter(db_models.ApiConsumerEndpoint.consumer_id == consumer.id).delete(
         synchronize_session=False
     )
+    db.query(db_models.ApiConsumerDeltaShare).filter(
+        db_models.ApiConsumerDeltaShare.consumer_id == consumer.id
+    ).delete(synchronize_session=False)
     db.delete(consumer)
     db.commit()
 

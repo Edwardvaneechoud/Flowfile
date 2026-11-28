@@ -177,6 +177,7 @@ nav:
     - Schedules: users/visual-editor/catalog/schedules.md
     - Alerts & Notifications: users/visual-editor/catalog/alerts.md
     - Flows as APIs: users/visual-editor/catalog/flow-api.md
+    - Delta Sharing: users/visual-editor/catalog/delta-sharing.md
     - Subflows: users/visual-editor/subflows.md
     - Projects & Git: users/projects.md
 

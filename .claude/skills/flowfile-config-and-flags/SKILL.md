@@ -176,6 +176,9 @@ These are **container-internal contract vars** — an operator normally never se
 |---|---|---|---|
 | `FLOWFILE_API_RUN_TIMEOUT_SECONDS` | `flowfile_core/flowfile_core/routes/flow_api.py:51` | `120` (float) | Timeout for one public-API-triggered flow run. |
 | `FLOWFILE_API_MAX_CONCURRENT_RUNS` | `routes/flow_api.py:57` | `4` (int → `asyncio.Semaphore`) | Global cap on concurrent public-API runs; beyond cap ⇒ fast 503. |
+| `FLOWFILE_DELTA_SHARING` | `delta_sharing/config.py::enabled` (per call) | on; `0`/`false`/`no`/`off` ⇒ off | Off ⇒ every `/delta-sharing` protocol and `/delta-sharing/manage` route answers 404. |
+| `FLOWFILE_DELTA_SHARING_ENDPOINT` | `delta_sharing/config.py::configured_endpoint` (per call) | unset | Public protocol URL written into profiles and used for local-disk download links; wins over the request's forwarded headers. |
+| `FLOWFILE_DELTA_SHARING_URL_TTL` | `delta_sharing/config.py::url_ttl_seconds` (per call) | `3600` (int, clamped 60 s–7 d; empty or invalid ⇒ default) | Lifetime of every file URL a `/query` hands out. |
 
 ### 3.11 Global-artifact storage backend
 

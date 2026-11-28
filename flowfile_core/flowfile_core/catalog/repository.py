@@ -25,6 +25,7 @@ from flowfile_core.database.models import (
     CatalogTable,
     CatalogTableReadLink,
     CatalogVisualization,
+    DeltaShareTable,
     ExternalCatalog,
     FlowApiEndpoint,
     FlowApiKey,
@@ -1069,6 +1070,7 @@ class SQLAlchemyCatalogRepository:
         self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
         self._db.query(TableFavorite).filter_by(table_id=table_id).delete()
         self._db.query(CatalogCdcCursor).filter_by(table_id=table_id).delete()
+        self._db.query(DeltaShareTable).filter_by(table_id=table_id).delete()
         # Drop grants on the table's visualizations before the bulk delete (this is a
         # second viz-delete path that bypasses delete_visualization).
         viz_ids = [row[0] for row in self._db.query(CatalogVisualization.id).filter_by(catalog_table_id=table_id)]

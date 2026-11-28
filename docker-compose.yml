@@ -52,6 +52,10 @@ services:
       - FLOWFILE_POLARS_CODE_KERNEL_MEMORY_GB=${FLOWFILE_POLARS_CODE_KERNEL_MEMORY_GB:-}
       # Whether AI features may send data values to a model. See .env.example.
       - FLOWFILE_AI_SEND_DATA=${FLOWFILE_AI_SEND_DATA:-true}
+      # Delta Sharing of catalog tables to outside tools. See .env.example.
+      - FLOWFILE_DELTA_SHARING=${FLOWFILE_DELTA_SHARING:-1}
+      - FLOWFILE_DELTA_SHARING_ENDPOINT=${FLOWFILE_DELTA_SHARING_ENDPOINT:-}
+      - FLOWFILE_DELTA_SHARING_URL_TTL=${FLOWFILE_DELTA_SHARING_URL_TTL:-}
       # Anonymous usage telemetry — hard-off by default in multi-user deployments. See .env.example.
       - FLOWFILE_TELEMETRY=${FLOWFILE_TELEMETRY:-0}
       - FLOWFILE_TELEMETRY_ENDPOINT=${FLOWFILE_TELEMETRY_ENDPOINT:-}

@@ -131,6 +131,12 @@ export default defineConfig({
                 // trailing slashes with an ABSOLUTE 307 redirect
                 configure: (proxy) => {
                     const backendOrigin = new RegExp(`^https?://(localhost|127\\.0\\.0\\.1):${CORE_PORT}`);
+                    // As nginx does: core builds the Delta Sharing file URLs on the address the client used.
+                    proxy.on('proxyReq', (proxyReq, req) => {
+                        if (req.headers.host) proxyReq.setHeader('x-forwarded-host', req.headers.host);
+                        proxyReq.setHeader('x-forwarded-proto', 'http');
+                        proxyReq.setHeader('x-forwarded-prefix', '/api');
+                    });
                     proxy.on('proxyRes', (proxyRes) => {
                         const location = proxyRes.headers['location'];
                         if (!location) return;

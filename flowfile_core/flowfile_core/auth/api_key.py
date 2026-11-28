@@ -40,6 +40,28 @@ def _is_expired(expires_at: datetime.datetime | None) -> bool:
     return expires_at < now
 
 
+def consumer_for_token(db: Session, raw_token: str | None) -> db_models.ApiConsumer | None:
+    """The enabled consumer an enabled, unexpired key belongs to, or ``None``; stamps the key's ``last_used_at``.
+
+    What a Delta Sharing recipient signs in with: access is then decided by the consumer's share grants.
+    """
+    if not raw_token:
+        return None
+    key = (
+        db.query(db_models.FlowApiKey)
+        .filter(db_models.FlowApiKey.key_hash == hash_api_key(raw_token), db_models.FlowApiKey.enabled.is_(True))
+        .first()
+    )
+    if key is None or _is_expired(key.expires_at) or key.consumer_id is None:
+        return None
+    consumer = db.get(db_models.ApiConsumer, key.consumer_id)
+    if consumer is None or not consumer.enabled or active_db_user(db, consumer.owner_id) is None:
+        return None
+    key.last_used_at = datetime.datetime.now(datetime.UTC)
+    db.commit()
+    return consumer
+
+
 def verify_api_key(
     slug: str,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
