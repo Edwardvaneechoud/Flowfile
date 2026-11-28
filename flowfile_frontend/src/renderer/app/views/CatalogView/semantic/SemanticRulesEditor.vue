@@ -1,5 +1,5 @@
 <template>
-  <el-popover trigger="click" placement="bottom-start" :width="320">
+  <el-popover trigger="click" placement="bottom-start" :width="360">
     <template #reference>
       <button
         class="rules-edit"
@@ -38,18 +38,31 @@
         <el-option v-for="k in kinds" :key="k.kind" :label="k.label" :value="k.kind" />
       </el-select>
       <p v-if="chosen" class="note">{{ chosen.hint }}</p>
-      <el-input
-        v-for="input in chosen?.fields ?? []"
-        :key="`${kind}-${input.key}`"
-        v-model="draft[input.key]"
-        size="small"
-        :aria-label="input.label"
-        :placeholder="placeholderOf(input.key, input.placeholder)"
-        :data-testid="`rule-${input.key}`"
-        @keydown.enter="add"
-      >
-        <template #prepend>{{ input.label }}</template>
-      </el-input>
+      <template v-for="input in chosen?.fields ?? []" :key="`${kind}-${input.key}`">
+        <div v-if="kind === 'formula'" class="rule-formula" :data-testid="`rule-${input.key}`">
+          <FunctionEditor
+            :editor-string="draft[input.key] ?? ''"
+            :columns="columnNames"
+            :column-types="columnTypes"
+            :placeholder="placeholderOf(input.key, input.placeholder)"
+            height="auto"
+            min-height="56px"
+            max-height="160px"
+            @update-editor-string="draft[input.key] = $event"
+          />
+        </div>
+        <el-input
+          v-else
+          v-model="draft[input.key]"
+          size="small"
+          :aria-label="input.label"
+          :placeholder="placeholderOf(input.key, input.placeholder)"
+          :data-testid="`rule-${input.key}`"
+          @keydown.enter="add"
+        >
+          <template #prepend>{{ input.label }}</template>
+        </el-input>
+      </template>
       <p v-if="problem" class="error">{{ problem }}</p>
       <div class="rule-actions">
         <el-button
@@ -71,11 +84,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, defineAsyncComponent, ref, watch } from "vue";
 import type { DataRule } from "../../../types/semantic.types";
 import { buildRule, describeRule, ruleKey, ruleKindsFor } from "./dataRules";
 
-const props = defineProps<{ column: string; dtype: string | null; rules: DataRule[] }>();
+// Loaded when a formula is written: the editor brings CodeMirror and the expressions API with it.
+const FunctionEditor = defineAsyncComponent(
+  () => import("../../../features/designer/editor/FunctionEditor.vue"),
+);
+
+/** `columns`: the table's columns, which a formula rule may name and its editor completes. */
+const props = withDefaults(
+  defineProps<{
+    column: string;
+    dtype: string | null;
+    rules: DataRule[];
+    columns?: { name: string; dtype: string | null }[];
+  }>(),
+  { columns: () => [] },
+);
 /** The column's whole list after the change; an empty list removes its rules. */
 const emit = defineEmits<(e: "save", rules: DataRule[]) => void>();
 
@@ -84,6 +111,10 @@ const draft = ref<Record<string, string>>({});
 const problem = ref("");
 
 const kinds = computed(() => ruleKindsFor(props.dtype));
+const columnNames = computed(() => props.columns.map((c) => c.name));
+const columnTypes = computed(() =>
+  Object.fromEntries(props.columns.filter((c) => c.dtype).map((c) => [c.name, c.dtype as string])),
+);
 const chosen = computed(() => kinds.value.find((k) => k.kind === kind.value));
 
 watch(kind, () => {
@@ -158,6 +189,12 @@ const remove = (index: number) =>
   display: flex;
   flex-direction: column;
   gap: var(--spacing-2);
+}
+
+.rule-formula {
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-sm, 4px);
+  overflow: hidden;
 }
 
 .rule-list {

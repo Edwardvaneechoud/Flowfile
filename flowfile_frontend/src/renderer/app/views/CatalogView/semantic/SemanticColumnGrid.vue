@@ -92,6 +92,7 @@
             :column="field.name"
             :dtype="field.dtype"
             :rules="rulesOf(field.facts.checks?.value)"
+            :columns="table.fields"
             @save="saveField(field.name, 'checks', $event)"
           />
           <span v-else-if="rulesOf(field.facts.checks?.value).length === 0" class="rules-none">
