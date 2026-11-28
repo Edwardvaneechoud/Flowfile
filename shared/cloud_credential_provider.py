@@ -15,7 +15,10 @@ import json
 import os
 from collections.abc import Callable, Mapping
 from datetime import UTC
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from shared.database import CloudConnectionRecord
 
 PROVIDER_CREDENTIAL_KEYS = frozenset(
     {"aws_access_key_id", "aws_secret_access_key", "aws_session_token", "account_key", "sas_token"}
@@ -108,14 +111,15 @@ def resolve_credential_ref(connection_id: int, user_id: int) -> tuple[dict[str, 
     """The Polars credentials of stored cloud connection *connection_id* and their expiry, resolved in this process.
 
     Reads the connection from this process's catalog database and decrypts its secrets with this process's master
-    key. An ``aws-cli`` profile or ``iam_role`` role therefore resolves with this process's AWS identity.
+    key. An ``aws-cli`` profile or ``iam_role`` role therefore resolves with this process's AWS identity. Only for a
+    *user_id* who may use the connection now (``shared.database.cloud_connection_record``).
     """
     from shared.cloud_storage.storage_options import build_storage_options
     from shared.database import cloud_connection_record
 
     label = f"cloud connection {connection_id} (user {user_id})"
     try:
-        record = cloud_connection_record(connection_id)
+        record = cloud_connection_record(connection_id, user_id)
     except Exception as e:
         raise CredentialResolutionError(
             f"Could not read {label} from the catalog database: {type(e).__name__}"
@@ -125,10 +129,19 @@ def resolve_credential_ref(connection_id: int, user_id: int) -> tuple[dict[str, 
             f"The catalog database this process reads has no {label}. A worker resolves a plan's cloud "
             "connection against the catalog core writes, so it must use core's catalog database."
         )
-    fields, ciphertexts = record
-    secrets = {name: decrypt_stored(value, label) for name, value in ciphertexts.items() if value}
-    options = build_storage_options(**fields, **secrets)
-    return _provider_credentials(fields["storage_type"], options)
+    _refuse_unusable(record, connection_id, user_id)
+    secrets = {name: decrypt_stored(value, label) for name, value in record.secrets.items() if value}
+    options = build_storage_options(**record.fields, **secrets)
+    return _provider_credentials(record.fields["storage_type"], options)
+
+
+def _refuse_unusable(record: CloudConnectionRecord, connection_id: int, user_id: int) -> None:
+    """Refuse a reference whose user may not use the connection, naming nothing of the connection but its id."""
+    if not record.usable:
+        raise CredentialResolutionError(
+            f"User {user_id} may not use cloud connection {connection_id}: it is not theirs, and no group they are "
+            "in was given it."
+        )
 
 
 def connection_credentials(settings: Mapping[str, Any]) -> tuple[dict[str, str], int | None]:
@@ -161,14 +174,14 @@ def credential_ref_kwargs(connection_id: int, user_id: int) -> dict[str, Any]:
     Polars calls it.
 
     Raises:
-        CredentialResolutionError: The catalog database could not be read.
+        CredentialResolutionError: The catalog database could not be read, or *user_id* may not use the connection.
     """
     from shared.cloud_storage.storage_options import build_storage_options
     from shared.database import cloud_connection_record
 
     provider = CredentialRefProvider(connection_id, user_id)
     try:
-        record = cloud_connection_record(connection_id)
+        record = cloud_connection_record(connection_id, user_id)
     except Exception as e:
         raise CredentialResolutionError(
             f"Could not read cloud connection {connection_id} (user {user_id}) from the catalog database: "
@@ -176,7 +189,8 @@ def credential_ref_kwargs(connection_id: int, user_id: int) -> dict[str, Any]:
         ) from None
     if record is None:
         return {"credential_provider": provider}
-    fields = record[0]
+    _refuse_unusable(record, connection_id, user_id)
+    fields = record.fields
     storage_type = fields["storage_type"]
     kwargs: dict[str, Any] = {}
     if fields["auth_method"] not in AMBIENT_AUTH_METHODS:

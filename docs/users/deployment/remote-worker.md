@@ -58,6 +58,7 @@ The worker reaches the catalog database and every database, Kafka broker, REST e
 
 - **One catalog.** Core and the worker use one PostgreSQL catalog database. A SQLite catalog is a file on core's host, so it serves only a worker on that host. On a catalog of its own, a worker's cloud read fails with *A worker resolves a plan's cloud connection against the catalog core writes, so it must use core's catalog database.*
 - **One master key.** The worker decrypts a stored connection's secrets when the node runs. With another key, a cloud read fails with *Core and the worker must share the same master key.*
+- **Who may use a connection.** The worker reads a stored connection only for the person a plan names, and only while it is theirs or shared with a group they are in, so it also reads the catalog's groups and shares. A plan naming someone who may no longer use the connection, such as one built before a share was removed, fails with `User <id> may not use cloud connection <id>: it is not theirs, and no group they are in was given it.`
 - **The host's own identity.** `aws-cli`, `iam_role`, `env_vars` and `managed_identity` connections store no credentials and authenticate as the host that runs the node. On a remote worker that is the worker host's AWS profile or role, environment or managed identity, not core's.
 
 ## Storage a remote worker can use

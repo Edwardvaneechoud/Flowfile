@@ -56,7 +56,10 @@ CREATE TABLE cloud_storage_connections (
   aws_access_key_id TEXT, aws_secret_access_key_id INTEGER, aws_session_token_id INTEGER, aws_role_arn TEXT,
   aws_allow_unsafe_html BOOLEAN, aws_profile TEXT, azure_account_name TEXT, azure_account_key_id INTEGER,
   azure_tenant_id TEXT, azure_client_id TEXT, azure_client_secret_id INTEGER, azure_sas_token_id INTEGER,
-  gcs_service_account_key_id INTEGER, gcs_project_id TEXT, endpoint_url TEXT, verify_ssl BOOLEAN);
+  gcs_service_account_key_id INTEGER, gcs_project_id TEXT, endpoint_url TEXT, verify_ssl BOOLEAN, user_id INTEGER);
+CREATE TABLE user_group_memberships (id INTEGER PRIMARY KEY, group_id INTEGER, user_id INTEGER);
+CREATE TABLE resource_grants (
+  id INTEGER PRIMARY KEY, resource_type TEXT, resource_id INTEGER, group_id INTEGER, permission TEXT);
 """
 
 
@@ -85,9 +88,10 @@ def ffsec(monkeypatch):
 
 @pytest.fixture
 def catalog(tmp_path, monkeypatch, ffsec):
-    """A catalog database holding only the two tables a reference resolves from; returns a store function.
+    """A catalog database holding only the tables a reference resolves from; returns a store function.
 
-    The store function encrypts each secret with the real ``$ffsec$`` scheme and answers the connection's id.
+    The store function encrypts each secret with the real ``$ffsec$`` scheme and answers the connection's id; the
+    connection is user 1's unless ``user_id`` names another owner.
     """
     path = tmp_path / "catalog.db"
     with sqlite3.connect(path) as con:
@@ -96,7 +100,7 @@ def catalog(tmp_path, monkeypatch, ffsec):
 
     def _store(secrets: dict[str, str] | None = None, **fields) -> int:
         with sqlite3.connect(path) as con:
-            columns = {"verify_ssl": True, **fields}
+            columns = {"verify_ssl": True, "user_id": 1, **fields}
             for name, value in (secrets or {}).items():
                 cur = con.execute(
                     "INSERT INTO secrets (encrypted_value) VALUES (?)", (crypto.encrypt_secret(value, 1),)
@@ -498,3 +502,107 @@ class TestCredentialRefProvider:
             con.execute("UPDATE secrets SET encrypted_value = ?", (crypto.encrypt_secret("not-the-secret", 1),))
         with pytest.raises(OSError):
             _plan().collect()
+
+
+def _catalog_execute(sql: str, *parameters) -> int:
+    """Run one statement on the fixture's catalog; answers the row id it wrote."""
+    database = os.environ["FLOWFILE_DATABASE_URL"].removeprefix("sqlite:///")
+    with sqlite3.connect(database) as con:
+        return con.execute(sql, parameters).lastrowid
+
+
+def _grant(connection_id: int, group_id: int, permission: str = "use", resource_type: str = "cloud_connection") -> int:
+    return _catalog_execute(
+        "INSERT INTO resource_grants (resource_type, resource_id, group_id, permission) VALUES (?, ?, ?, ?)",
+        resource_type,
+        connection_id,
+        group_id,
+        permission,
+    )
+
+
+def _join(group_id: int, user_id: int) -> int:
+    return _catalog_execute("INSERT INTO user_group_memberships (group_id, user_id) VALUES (?, ?)", group_id, user_id)
+
+
+def _alice_s3(catalog) -> int:
+    """User 1's S3 connection, holding the sentinel secret."""
+    return catalog(
+        {"aws_secret_access_key": SENTINEL},
+        connection_name="alice-s3",
+        storage_type="s3",
+        auth_method="access_key",
+        aws_access_key_id="AKID-ALICE",
+        endpoint_url="http://alice.example",
+    )
+
+
+_REFUSED = r"^User 2 may not use cloud connection \d+: it is not theirs, and no group they are in was given it\.$"
+
+
+class TestWhoMayUseAReference:
+    """A reference resolves only for the connection's owner or a member of a group it was shared with."""
+
+    def test_another_persons_reference_is_refused_and_names_nothing_of_the_connection(self, catalog):
+        connection_id = _alice_s3(catalog)
+
+        for resolve in (CredentialRefProvider(connection_id, 2), lambda: credential_ref_kwargs(connection_id, 2)):
+            with pytest.raises(CredentialResolutionError, match=_REFUSED) as refused:
+                resolve()
+            for leaked in (SENTINEL, "AKID-ALICE", "alice.example", "alice-s3"):
+                assert leaked not in str(refused.value)
+
+    def test_the_owner_resolves_it(self, catalog):
+        connection_id = _alice_s3(catalog)
+
+        assert CredentialRefProvider(connection_id, 1)()[0]["aws_secret_access_key"] == SENTINEL
+        assert isinstance(credential_ref_kwargs(connection_id, 1)["credential_provider"], CredentialRefProvider)
+
+    @pytest.mark.parametrize("permission", ["use", "manage"])
+    def test_a_member_of_a_group_it_was_shared_with_resolves_it(self, catalog, permission):
+        connection_id = _alice_s3(catalog)
+        _grant(connection_id, group_id=5, permission=permission)
+        _join(5, 2)
+
+        assert CredentialRefProvider(connection_id, 2)()[0]["aws_secret_access_key"] == SENTINEL
+        assert credential_ref_kwargs(connection_id, 2)["storage_options"]["endpoint_url"] == "http://alice.example"
+
+    def test_a_grant_to_a_group_the_person_is_not_in_is_refused(self, catalog):
+        connection_id = _alice_s3(catalog)
+        _grant(connection_id, group_id=5)
+        _join(6, 2)
+        _join(5, 3)
+
+        with pytest.raises(CredentialResolutionError, match=_REFUSED):
+            CredentialRefProvider(connection_id, 2)()
+
+    def test_a_grant_on_another_kind_of_resource_with_the_same_id_is_refused(self, catalog):
+        connection_id = _alice_s3(catalog)
+        _grant(connection_id, group_id=5, resource_type="secret")
+        _join(5, 2)
+
+        with pytest.raises(CredentialResolutionError, match=_REFUSED):
+            CredentialRefProvider(connection_id, 2)()
+
+    @pytest.mark.parametrize("removed", ["resource_grants", "user_group_memberships"], ids=["unshared", "left_group"])
+    def test_a_reference_made_while_shared_is_refused_once_the_share_is_gone(self, catalog, removed):
+        connection_id = _alice_s3(catalog)
+        _grant(connection_id, group_id=5)
+        _join(5, 2)
+        provider = CredentialRefProvider(connection_id, 2)
+        assert provider()[0]["aws_secret_access_key"] == SENTINEL
+
+        _catalog_execute(f"DELETE FROM {removed}")
+
+        with pytest.raises(CredentialResolutionError, match=_REFUSED):
+            provider()
+
+    def test_a_reference_to_a_deleted_connection_does_not_follow_its_id_to_the_next_owner(self, catalog):
+        """SQLite gives the next row the id of the deleted top row, so an old reference names the new connection."""
+        mallory = catalog({"aws_secret_access_key": "junk"}, storage_type="s3", auth_method="access_key", user_id=2)
+        provider = CredentialRefProvider(mallory, 2)
+        _catalog_execute("DELETE FROM cloud_storage_connections WHERE id = ?", mallory)
+
+        assert _alice_s3(catalog) == mallory
+        with pytest.raises(CredentialResolutionError, match=_REFUSED):
+            provider()

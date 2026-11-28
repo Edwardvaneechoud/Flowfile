@@ -1,7 +1,7 @@
 {
-  "protocol_version": 3,
+  "protocol_version": 4,
   "entries": {
-    "catalog cloud_storage_connections": "d07b34d88d5d98f4dcefc5379e59f4654fa069a22f353e0d23453d3c802192e9",
+    "catalog cloud_storage_connections": "e933936cfa3ef33759edb6045463c286c2662c7627e0cd4abd5aebd60210b9c6",
     "operation cloud_write": "95757474fb2916fc076f766f5da5484db9bd508e75605e677917040a091b1079",
     "operation custom_node": "b8ff0de7ef3eb29f6c9c278f543f5b257c3df2e52c7032a24aeeea3d11ec930e",
     "operation database_read": "5859c2dfaf52191b70be795ff625a613b675a7731135b8b2f1e0d2fa5e79bc29",

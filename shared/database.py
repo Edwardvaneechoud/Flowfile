@@ -2,6 +2,7 @@
 
 import threading
 from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine, make_url
@@ -78,25 +79,52 @@ _CLOUD_CONNECTION_SECRETS = (
 )
 
 
-def cloud_connection_record(connection_id: int) -> tuple[dict, dict[str, str | None]] | None:
-    """A stored cloud connection by id: its plain fields and its secrets as stored ciphertext; None when absent.
+_CLOUD_CONNECTION_ACCESS = {
+    "cloud_storage_connections": ("user_id",),
+    "resource_grants": ("resource_type", "resource_id", "group_id"),
+    "user_group_memberships": ("group_id", "user_id"),
+}
+"""The columns that decide who may use a stored cloud connection, read beside the connection itself."""
 
-    Read from the catalog database this process is configured for, by id only, with no access check: who may use
-    the connection was decided where the reference to it was made.
+
+class CloudConnectionRecord(NamedTuple):
+    """A stored cloud connection as a reference to it resolves: plain fields, secrets as ciphertext, and whether the
+    user the reference names may use it (``secrets`` is empty when not)."""
+
+    fields: dict
+    secrets: dict[str, str | None]
+    usable: bool
+
+
+def cloud_connection_record(connection_id: int, user_id: int) -> CloudConnectionRecord | None:
+    """A stored cloud connection by id, as *user_id* may use it; None when absent.
+
+    Read from the catalog database this process is configured for. *user_id* may use the connection when it is
+    theirs or a group they are a member of was given it (``use`` or ``manage``), the rule core finds a connection by
+    when it makes the reference, asked again on every read: a share removed since, or an id SQLite handed to another
+    person's connection, no longer resolves. Grants count whatever ``FLOWFILE_MODE`` this process runs with, as a
+    worker on another host may run with none set, and where sharing is off no grant is ever made.
     """
     secrets = ", ".join(
         f"(SELECT encrypted_value FROM secrets WHERE secrets.id = c.{name}_id) AS {name}"
         for name in _CLOUD_CONNECTION_SECRETS
     )
+    usable_column = (
+        "(c.user_id = :user_id OR EXISTS (SELECT 1 FROM resource_grants g JOIN user_group_memberships m"
+        " ON m.group_id = g.group_id WHERE g.resource_type = 'cloud_connection' AND g.resource_id = c.id"
+        " AND m.user_id = :user_id)) AS usable"
+    )
     query = text(
-        f"SELECT {', '.join('c.' + name for name in _CLOUD_CONNECTION_FIELDS)}, {secrets} "
+        f"SELECT {', '.join('c.' + name for name in _CLOUD_CONNECTION_FIELDS)}, {secrets}, {usable_column} "
         "FROM cloud_storage_connections c WHERE c.id = :id"
     )
     with get_catalog_engine().connect() as connection:
-        row = connection.execute(query, {"id": connection_id}).mappings().first()
+        row = connection.execute(query, {"id": connection_id, "user_id": user_id}).mappings().first()
     if row is None:
         return None
-    return (
-        {name: row[name] for name in _CLOUD_CONNECTION_FIELDS},
-        {name: row[name] for name in _CLOUD_CONNECTION_SECRETS},
+    usable = bool(row["usable"])
+    return CloudConnectionRecord(
+        fields={name: row[name] for name in _CLOUD_CONNECTION_FIELDS},
+        secrets={name: row[name] for name in _CLOUD_CONNECTION_SECRETS} if usable else {},
+        usable=usable,
     )
