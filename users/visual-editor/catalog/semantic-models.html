@@ -1,0 +1,2595 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/catalog/semantic-models.html">
+      
+      
+        <link rel="prev" href="sql-editor.html">
+      
+      
+        <link rel="next" href="notebooks.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Semantic Models - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#semantic-models" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Semantic Models
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../roadmap.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Roadmap
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Catalog & Automation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="virtual-tables.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Virtual Tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="slowly-changing-dimensions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slowly Changing Dimensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="change-tracking.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change Tracking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="sql-editor.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SQL Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Models
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="semantic-models.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-semantic-model-holds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a semantic model holds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-a-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open a model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#suggest-a-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggest a model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Suggest a model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#while-a-suggestion-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        While a suggestion runs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#with-ai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        With AI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#suggest-more-of-one-kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggest more of one kind
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ask-for-something-specific" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ask for something specific
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-local-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The local model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-model-does-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which model does what
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#describe-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Describe columns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Describe columns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#confidentiality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Confidentiality
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data rules
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data rules">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#run-the-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run the rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-a-join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add a join
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#define-a-metric" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Define a metric
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#remove-a-metric-or-a-join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remove a metric or a join
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-and-who-can-accept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review and who can accept
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ask-for-a-number" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ask for a number
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ask for a number">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-a-question-is-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a question is read
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="notebooks.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="visualizations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="schedules.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schedules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="alerts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Alerts & Notifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flow-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flows as APIs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subflows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../projects.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Projects & Git
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../roadmap.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-semantic-model-holds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a semantic model holds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-a-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open a model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#suggest-a-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggest a model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Suggest a model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#while-a-suggestion-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        While a suggestion runs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#with-ai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        With AI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#suggest-more-of-one-kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggest more of one kind
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ask-for-something-specific" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ask for something specific
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-local-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The local model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-model-does-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which model does what
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#describe-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Describe columns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Describe columns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#confidentiality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Confidentiality
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data rules
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data rules">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#run-the-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run the rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-a-join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add a join
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#define-a-metric" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Define a metric
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#remove-a-metric-or-a-join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remove a metric or a join
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-and-who-can-accept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review and who can accept
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ask-for-a-number" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ask for a number
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ask for a number">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-a-question-is-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a question is read
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="semantic-models">Semantic Models</h1>
+<p>A semantic model records what the tables of a catalog schema mean: what each column describes, how tables join, and which metrics (such as total revenue) everyone should calculate the same way. This page covers where to find a model, how to fill it in, how its facts are reviewed, and how to ask for a number from an approved metric.</p>
+<div class="admonition info">
+<p class="admonition-title">Not in Flowfile Lite</p>
+<p>Semantic models require the full desktop/server build and are not available in the browser-only <a href="../../deployment/lite.html">Flowfile Lite</a> edition.</p>
+</div>
+<hr />
+<h2 id="what-a-semantic-model-holds">What a semantic model holds</h2>
+<p>There is one model per <strong>schema</strong>. It holds three kinds of facts:</p>
+<table>
+<thead>
+<tr>
+<th>Fact</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Descriptions and roles</strong></td>
+<td>"One row per order" on a table; on a column, a description, how it is used (Identifier, Date, Group by or Amount) and a confidentiality level (Public, Internal, Confidential or Restricted).</td>
+</tr>
+<tr>
+<td><strong>Joins</strong></td>
+<td><code>orders.customer_id</code> matches <code>customers.customer_id</code>.</td>
+</tr>
+<tr>
+<td><strong>Metrics</strong></td>
+<td><code>revenue</code> is <code>SUM(amount)</code>, counted on <code>orders</code>, without cancelled orders.</td>
+</tr>
+</tbody>
+</table>
+<p>Joins that cross schemas are held one level up, by the <strong>catalog</strong> that contains the schemas, and are managed on the catalog's own page.</p>
+<p>Every fact is a proposal first. It becomes part of the model when it is <strong>accepted</strong>, and it keeps its author, its status and a history of who changed it and when. Only accepted facts are used to answer questions. A metric that is edited keeps its accepted definition until the new one is accepted, and carries a version number.</p>
+<hr />
+<h2 id="open-a-model">Open a model</h2>
+<p>In the catalog tree, expand a schema and click <strong>Semantic model</strong>, the first entry under it. A badge shows how many facts wait for review. The address of the page keeps the selection (<code>semanticNamespaceId</code> in the URL), so a reload returns to the same model.</p>
+<p>A catalog has no entry of its own. Click the catalog in the tree: its page lists, under <strong>Semantic models</strong>, each schema with its counts ("12 accepted · 3 waiting for review", or "Not modelled yet") and a button that opens that schema's model (<strong>Start</strong> for one without facts). Below that, <strong>Joins across schemas</strong> lists the joins between tables of two different schemas, with <strong>Add join</strong>, <strong>Suggest joins</strong>, and <strong>Accept</strong> and <strong>Reject</strong> on one that waits for review. An old address that named a catalog's model opens the catalog's page.</p>
+<p>The page of a table that is part of the model carries the line <strong>In the semantic model</strong>, with its fact count; a table with no facts shows <strong>Describe this table in the semantic model</strong> instead. Either opens the model on the Tables tab at that table, with its card expanded and briefly highlighted. From the model, the <strong>Open table</strong> button on a table card (and on a table's heading in the Metrics tab) and the table names in the Joins tab lead back to that table's page.</p>
+<p>A schema without facts shows a short explanation and a <strong>Describe your tables</strong> button. The header holds the model's name and description (click to edit), a progress bar of accepted, pending and stale facts, <strong>Re-sync</strong> and <strong>Export YAML</strong>.</p>
+<p>A fact is <strong>stale</strong> when the catalog changed underneath it, for example a column it names was removed. <strong>Re-sync</strong> compares the model with the catalog again; the model is also compared when you open it.</p>
+<hr />
+<h2 id="suggest-a-model">Suggest a model</h2>
+<p>A schema with no facts shows <strong>Suggest a model</strong> next to <strong>Describe your tables</strong>. Once the model has facts, the header has one <strong>Suggest</strong> button: it opens a box with one field, "What should be suggested? Leave empty for the whole model.", and a <strong>Suggest</strong> button (Enter, or Cmd/Ctrl+Enter, sends it). Left empty, it suggests the whole model as described here; with words in it, it is a <a href="#ask-for-something-specific">specific request</a>. The whole-model suggestion needs no AI and nothing to configure. Flowfile reads one summary query per table (distinct counts, null counts and, for number and time columns, smallest and largest values) and proposes, from types and those statistics only, never from what a column's name seems to mean:</p>
+<ul>
+<li><strong>Column roles</strong> (<code>key</code>, <code>time</code>, <code>category</code>, <code>amount</code>): a unique integer or text column is a key, a date is a date, a number that repeats is an amount, a boolean or a text column with few distinct values is a group-by column, and a column that points to another table's unique column is a key.</li>
+<li><strong>Joins</strong>, where a column has the same name and type as a column that is unique in another table and repeats in its own, each with its evidence, for example "<code>customer_id</code> is unique in <code>customers</code> (3 of 3 rows) and repeats in <code>orders</code>". A schema's <strong>Suggest</strong> proposes joins between its own tables; <strong>Suggest joins</strong> on the catalog's page looks across all its schemas and says how many of its proposals wait there and how many in a schema's Review.</li>
+<li><strong>Metrics</strong>: a row count, the sum and average of amount columns and a distinct count of keys, with the time column and allowed dimensions filled in.</li>
+</ul>
+<p>Everything lands in the <strong>Review</strong> tab, which opens afterwards. Running <strong>Suggest</strong> again adds nothing that the model already holds. If the statistics cannot be read, only what a column's type tells (dates, booleans) is proposed, and the page says so.</p>
+<h3 id="while-a-suggestion-runs">While a suggestion runs</h3>
+<p>A suggestion on the local model can take minutes. While one runs, a status line under the header says so, for example "Suggesting a model… started 2 minutes ago · 3 of 7 tables", and every Suggest button of the model is disabled with a tooltip saying a suggestion is already running. The line is the same in every window and after a page reload. When it ends, the model, the Review queue and the tree's counts reload and the line becomes the result, for example "Proposed 12 column roles, 2 joins and 9 metrics.", with a link to <strong>Review</strong> and a button to dismiss it; a dismissed result is not shown again in that browser tab. A suggestion started from a tab's button or the request box shows its result there instead. Starting a second suggestion for the same model while one runs is refused.</p>
+<h3 id="with-ai">With AI</h3>
+<p>When AI is usable (a provider is configured, or the local model is installed), the same button also has the model write words: a one-sentence description of each table and column, and a name and meaning for each metric candidate. It makes one small call per table (wider tables are split into several), and the model is only asked for text; the roles, joins and metrics themselves still come from the rules. A table the model cannot describe keeps its rule-based suggestions and the page names it. AI suggestions are marked as AI in Review and are decided like any other fact.</p>
+<p>Metric names from the model apply to candidates that are not stored yet; if you ran <strong>Suggest</strong> before AI was available, a later run adds descriptions only.</p>
+<h3 id="suggest-more-of-one-kind">Suggest more of one kind</h3>
+<p>The <strong>Joins</strong>, <strong>Metrics</strong> and <strong>Tables</strong> tabs each have one button beside their add button: <strong>Suggest joins</strong>, <strong>Suggest metrics</strong> and <strong>Suggest descriptions and roles</strong>. One click runs the rules for that kind only (no AI needed); when AI is usable, the model then looks for what the rules cannot find, such as a join whose column names differ (<code>orders.customer</code> to <code>customers.id</code>) or a metric beyond a count, sum or average. The button's tooltip names the model that will run. The tab says what was proposed in one line, for example "Proposed 2 joins. They wait in Review.", or that nothing new was found. New joins and metrics show on the tab as pending straight away. A request for one particular thing goes through the header's request box.</p>
+<h3 id="ask-for-something-specific">Ask for something specific</h3>
+<p>Write what you want in the header's request box, in your own words: "a metric for average order value", "describe the orders table", "how are orders and products related?", "other words people use for revenue". This needs AI; there is no rules-only version of it. The box shows which model will run it, for example "Uses qwen3.5-2b on this computer · Change"; see <a href="#which-model-does-what">Which model does what</a>.</p>
+<p>The model reads the request and Flowfile checks what can be checked against the model and the data. The model sees the tables' names, column types, roles and descriptions, the joins and the metric names, never a data row; a Confidential or Restricted column is sent by name and type only and is never described. Every suggestion is checked before it is stored:</p>
+<ul>
+<li>Table, column and metric names must exist, and a suggestion's kind must be one of metric, description, join, role or synonyms.</li>
+<li>A metric is compiled and tried against the data exactly like one you write: a formula that does not run is not stored, and neither is one whose formula and filter the model already has.</li>
+<li>A join is measured like one you add: the right way round it is proposed with the measurement, the wrong way round it is turned around and proposed with a note saying so, and a join that would multiply rows, or cannot be measured, is refused. Its two columns must hold the same type of value.</li>
+<li>A role must be one of the four and fit the column's type (a date for Date, a number for Amount); a description must not be empty; synonyms are a list of other words for a column or a metric.</li>
+</ul>
+<p>What fails goes back to the model once with the reasons; what still fails is listed under "not stored" with its reason. Everything stored waits in <strong>Review</strong>, also on a desktop where your own edits count at once: AI can propose, never accept.</p>
+<h3 id="the-local-model">The local model</h3>
+<p>The default writer is the small model that runs on your own computer: nothing leaves it. When no AI is set up and the local model can be installed, the panel shows a card, <strong>Let AI on this computer write the descriptions</strong>, that downloads it in one click with progress; the Ask tab offers the same. Online providers are optional. See <a href="../../../ai/index.html#ai-in-semantic-models">AI in semantic models</a>.</p>
+<h3 id="which-model-does-what">Which model does what</h3>
+<p>Two choices in <strong>Settings → AI → Assistant</strong> decide which model runs: <strong>Semantic model: questions</strong> (the Ask tab's question box) and <strong>Semantic model: suggestions</strong> (Suggest a model, the tab buttons and the request box). Each can be <strong>Same as main</strong> or a provider and model of its own, and they are independent. The question box and the request box show the model they will use before you send, with a <strong>Change</strong> link that opens the same two selects in place and a link to all AI settings. With no choice of its own, a task uses the local model when it is installed, else your main provider and model. An earlier single <strong>Semantic model</strong> choice serves both until you change one. The choices are kept in your browser or desktop app.</p>
+<div class="admonition note">
+<p class="admonition-title">Test results</p>
+<p>On the 2B local model, a set of twenty test questions on one sample data set was answered fully right in 10 and 8 of 20 (two runs), with 4 and 3 more answers that applied part of the question and said so. The questions are now checked only against the model and the data, not against wording rules, so the model's own reading decides more; earlier versions with wording rules scored higher on this one set. That is one data set, not a guarantee; Review shows each fact's source, and every answer shows how it was read.</p>
+</div>
+<hr />
+<h2 id="describe-columns">Describe columns</h2>
+<p>The <strong>Tables</strong> tab lists each table of the schema with its columns. Click a table's description, or a column's <strong>Description</strong>, <strong>Used as</strong> or <strong>Confidentiality</strong>, to edit it. <strong>Used as</strong> offers:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Identifier</strong></td>
+<td>Tells rows apart. Counted, never added up.</td>
+</tr>
+<tr>
+<td><strong>Date</strong></td>
+<td>When it happened. Used for trends over time.</td>
+</tr>
+<tr>
+<td><strong>Group by</strong></td>
+<td>A label to split a number by.</td>
+</tr>
+<tr>
+<td><strong>Amount</strong></td>
+<td>A number to add up or average.</td>
+</tr>
+</tbody>
+</table>
+<p>Under a column's description, <strong>Also called…</strong> holds other words people use for it, separated by commas ("turnover, sales" for <code>revenue</code>). The question box shows them to the model beside the column. They start empty; nothing fills them but you, or an AI suggestion you accept.</p>
+<p>A status chip appears next to a value only while it still needs a person: proposed and waiting for review, or stale.</p>
+<p>A table's own page shows the same columns under <strong>Schema</strong>, and you edit them there in the same way. <strong>Open in semantic model</strong> jumps to the table's card in the <strong>Tables</strong> tab.</p>
+<p>A table or column description that is accepted is also written back to the catalog, so it shows wherever the catalog shows descriptions.</p>
+<h3 id="confidentiality">Confidentiality</h3>
+<p>Marking a column <strong>Confidential</strong> or <strong>Restricted</strong> keeps it from AI on every surface that reads catalog tables: the semantic draft and question box, the chart prompt bar, and the dashboard builder and its story. The model gets the column's name and type only, never a value, description or synonym. It applies as soon as the level is proposed, before anyone accepts it, and a table marked at that level covers all its columns. If the level cannot be read, values are withheld for that table.</p>
+<p>This does not hide anything from people who can open the schema; they still see every column and value.</p>
+<hr />
+<h2 id="data-rules">Data rules</h2>
+<p>A data rule says what every row of a column must hold. In the <strong>Tables</strong> tab (and under <strong>Schema</strong> on a table's own page), click <strong>Add rule</strong> in a column's <strong>Rules</strong> cell (the pencil, once the column has rules), pick a kind and click <strong>Add rule</strong>. Remove a rule with the <strong>✕</strong> beside it in the same box.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Passes when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Not null</strong></td>
+<td>The row has a value.</td>
+</tr>
+<tr>
+<td><strong>Unique</strong></td>
+<td>No other row has the same value.</td>
+</tr>
+<tr>
+<td><strong>One of</strong></td>
+<td>The value is one of the values listed, separated by commas. Not offered for date and time columns.</td>
+</tr>
+<tr>
+<td><strong>Pattern</strong></td>
+<td>The value matches a regular expression, such as <code>^[A-Z]{2}$</code>.</td>
+</tr>
+<tr>
+<td><strong>Between</strong></td>
+<td>A number is within a range. Either end may be left open. Offered for number columns.</td>
+</tr>
+<tr>
+<td><strong>Length</strong></td>
+<td>The number of characters is within a range. Either end may be left open.</td>
+</tr>
+<tr>
+<td><strong>Formula</strong></td>
+<td>One <a href="../../formulas/index.html">formula</a> line is true for the row, such as <code>[amount] &gt;= 0</code> or <code>[end_date] &gt;= [start_date]</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>A formula may name any column of the table, and its box completes column names (type <code>[</code>) and functions as in the Formula node.</p>
+<p>A row without a value passes every rule except <strong>Not null</strong>. A formula that answers nothing for a row (it reads an empty value) fails that row.</p>
+<p>A column's rules are one fact, reviewed like any other: a change waits in <strong>Review</strong> where review is on, and only accepted rules run. A rule that cannot work is refused when you add it, with the reason: a pattern that does not compile, a range on a text column, a formula that names a missing column or does not answer true or false. A rule is refused only when that check proves it wrong. When the check cannot be made, for instance because the catalog holds no usable type for the column, the rule is saved with a notice and judged when it runs.</p>
+<h3 id="run-the-rules">Run the rules</h3>
+<p>A table with rules shows <strong>Run rules</strong> in its header. A run checks the table's accepted rules against all its rows, on the compute backend, and marks each rule: green when every row passes, red with the number of failing rows when some do not (hover the rule for the count), amber when the rule could not be evaluated. The header sums it up ("3 of 4 rules pass"). Anyone who can read the model can run its rules.</p>
+<p>Results are kept, so the marks are still there when you come back, and they belong to the rules as accepted at that moment: change a rule and it shows as not run yet. The header and each rule's hover say when the rules last ran; a result is not cleared when the table is written, so run the rules again after the data changes. Rules run only when you press <strong>Run rules</strong>; a write to the table does not run them.</p>
+<p>A virtual table is skipped: it holds no stored rows, and checking it would run what produces it. A table on this server's disk is skipped too when the compute backend does not read this server's files, as with a <a href="../../deployment/remote-worker.html">worker on another host</a>: its catalog tables must be on object storage.</p>
+<hr />
+<h2 id="add-a-join">Add a join</h2>
+<p>Open the <strong>Joins</strong> tab and click <strong>Add join</strong>. Fill in:</p>
+<ul>
+<li><strong>Name</strong>, for example <code>orders_to_customers</code>.</li>
+<li><strong>From table (many rows)</strong> and <strong>To table (one row)</strong>.</li>
+<li><strong>Matching columns</strong>, one or more pairs: a column of the from table and a column of the to table.</li>
+<li><strong>Description</strong> (optional).</li>
+</ul>
+<p>"Many rows on the from side per one row on the to side" means each row of the to table is matched by any number of rows of the from table, and each from row has one match. <code>orders</code> is the from side and <code>customers</code> the to side because many orders belong to one customer. Flowfile follows a join only in this direction when it answers a question, so a total is never counted twice. </p>
+<p>Before a join is stored, Flowfile measures it: for each side, the rows that have a key and the distinct keys. A correct join is stored with that measurement as its evidence, for example "<code>customer_id</code> is unique in <code>customers</code> (40 of 40 rows) and repeats in <code>orders</code> (40 distinct in 300 rows)". Two cases are refused with a message that says what to do:</p>
+<ul>
+<li><strong>Reversed</strong>: the from side has the unique key and the to side repeats. Swap the two sides. The dialog has <strong>Swap sides</strong> for this.</li>
+<li><strong>Both sides repeat</strong>: the join would multiply rows. The to side needs columns that identify one row.</li>
+</ul>
+<p>An empty table, or a worker that cannot be reached, stores the join marked "Direction not checked". The <strong>Joins</strong> tab flags a join that is already wrong and offers <strong>Fix direction</strong> on an accepted reversed one, which proposes the same join with the sides swapped. A wrong join that was already accepted keeps running until it is fixed.</p>
+<p>The to table can be in another schema of the same catalog. That join belongs to the catalog: it is listed on the catalog's page under <strong>Joins across schemas</strong>, and in the schema's Joins tab with a <code>catalog</code> label.</p>
+<hr />
+<h2 id="define-a-metric">Define a metric</h2>
+<p>Open the <strong>Metrics</strong> tab and click <strong>Add metric</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Table</strong></td>
+<td>The table the metric counts rows of. A metric belongs to one table.</td>
+</tr>
+<tr>
+<td><strong>Name</strong></td>
+<td>The name people ask for, for example <code>total_revenue</code>. Unique within the schema.</td>
+</tr>
+<tr>
+<td><strong>What it means</strong></td>
+<td>A sentence in plain words.</td>
+</tr>
+<tr>
+<td><strong>Also called (optional)</strong></td>
+<td>Other words people use for the metric, separated by commas. The question box shows them to the model.</td>
+</tr>
+<tr>
+<td><strong>Expression</strong></td>
+<td>The aggregate as SQL, for example <code>SUM(amount)</code>. A ratio of two aggregates works inside one expression.</td>
+</tr>
+<tr>
+<td><strong>Filter (optional)</strong></td>
+<td>A condition that applies to every use of the metric, for example <code>status = 'completed'</code>.</td>
+</tr>
+<tr>
+<td><strong>Time column (optional)</strong></td>
+<td>The column used to group by day, week, month, quarter or year.</td>
+</tr>
+<tr>
+<td><strong>Number format (optional)</strong></td>
+<td>For example <code>#,##0.00</code>.</td>
+</tr>
+<tr>
+<td><strong>Allowed dimensions</strong></td>
+<td>The columns the metric can be broken down by: the table's own, or a joined table's as <code>table.column</code>. Leave it empty to allow any column the metric can reach; a question in the Ask tab then chooses among the ones marked <strong>Group by</strong>.</td>
+</tr>
+</tbody>
+</table>
+<p>The expression and the filter may also use columns of joined tables, written <code>table.column</code> (for example <code>SUM(quantity * products.price)</code>, or <code>schema.table.column</code> when two tables share a name). Only tables reached by following joins from the many side to the one side can be used, so each row of the metric's table meets at most one row of a joined table and the total is never multiplied. The editor completes the table's columns, the joined tables' columns after <code>table.</code> and SQL functions, and lists under the expression which tables can be used.</p>
+<p>Before a metric is stored, Flowfile runs its expression against the table on a single row. An expression that does not run is refused with the engine's message. The SQL dialect is the one the <a href="sql-editor.html#writing-queries">SQL Editor</a> uses.</p>
+<p>Editing a metric proposes a new definition; the old one stays in force until the new one is accepted. Clearing an optional part (the filter, the description) in an edit that is accepted at once removes that part.</p>
+<hr />
+<h2 id="remove-a-metric-or-a-join">Remove a metric or a join</h2>
+<ul>
+<li><strong>A metric</strong>: <strong>Remove metric</strong> at the bottom left of the metric's editor, or the bin icon on its card in the <strong>Metrics</strong> tab. After a confirmation, questions and queries can no longer use it.</li>
+<li><strong>A join</strong>: <strong>Remove</strong> on its row in the <strong>Joins</strong> tab (or, for a join across schemas, on the catalog's page). The confirmation first lists the metrics that use the join and will stop working, for example a metric whose formula reads <code>products.price</code> or that is broken down by <code>customers.country</code>, or says that no metric uses it. A query that still asks for such a metric is refused with a sentence naming the table it can no longer reach.</li>
+</ul>
+<p>Nothing is deleted. Removing withdraws the metric's or join's facts: an accepted fact, or your own proposal, is <strong>retracted</strong>; a proposal someone else made (a person, the rules or AI) is <strong>rejected</strong>, so the rules and AI do not propose it again. The <strong>History</strong> tab keeps every step, and the same name can be used for a new metric or join afterwards.</p>
+<p>To remove a column's description, role or confidentiality, clear it: empty the description, or clear <strong>Used as</strong> or <strong>Confidentiality</strong> back to <strong>Not set</strong>.</p>
+<p>On a shared server the same review rules decide who may remove: whoever manages the schema (or, for a join across schemas, the catalog), and anyone for a proposal of their own. The button is not shown to others.</p>
+<hr />
+<h2 id="review-and-who-can-accept">Review and who can accept</h2>
+<p>The <strong>Review</strong> tab lists the facts that wait for a decision. Each shows its source (a person, or rules, or AI), the confidence and rationale when the source gave them, and <strong>Accept</strong> and <strong>Reject</strong> buttons. <strong>Accept all</strong> decides everything in the queue. A metric or join edit that consists of several facts is decided as one group.</p>
+<p>Who can accept depends on where Flowfile runs. The chip in the header says which case applies:</p>
+<ul>
+<li><strong>Solo</strong>, on your own desktop: your edits are accepted at once. Facts proposed by AI still queue, because only a person can accept.</li>
+<li><strong>Team review</strong>, on a shared server: every change waits for someone who <strong>manages</strong> the schema, that is its owner or a user with a manage grant. Anyone who may write to the schema can propose. Joins that cross schemas are decided by whoever manages the catalog.</li>
+</ul>
+<p>A fact proposed by AI can never be accepted by AI.</p>
+<p>Reading a model follows the catalog. A schema you own or were granted (<code>use</code> or <code>manage</code>, on it or on its catalog) shows the facts about all its tables. A public schema that you neither own nor were granted shows its own name, description and AI instructions, the tables in it that you own or were granted, and the joins between those; its other tables do not appear, in the model, in Review, in History, in the export or in answers to questions. Facts at the catalog level, such as joins across schemas, show only when you can read every schema of the catalog. In a public schema facts are accepted by its owner, a user with a manage grant or an admin; the built-in public schemas (<code>General</code>, <code>Unnamed Flows</code>, <code>Python Editor</code>) are accepted by an admin.</p>
+<div class="admonition note">
+<p class="admonition-title">Team review</p>
+<p>The team rules follow the catalog's <a href="../../deployment/sharing.html">sharing and grants</a>. They are tested in process, not on a live shared server.</p>
+</div>
+<p>The <strong>History</strong> tab shows the events of one table, column, metric or join: who proposed, accepted, rejected, retracted or reopened it, and when.</p>
+<hr />
+<h2 id="ask-for-a-number">Ask for a number</h2>
+<p>The <strong>Ask</strong> tab computes a metric from its definition. To do it by hand, choose a <strong>Metric</strong>, then optionally <strong>Group by</strong> one or more dimensions (columns of the metric's table, or of any table reached by following joins from the many side to the one side, including tables in other schemas), a <strong>Time grain</strong> (when the metric has a time column) and <strong>Filters</strong> (<strong>Add filter</strong>), and press <strong>Run</strong>. The result shows the rows and a line saying which definition answered: "Answered with <em>revenue</em> · approved by … · version 3". The generated SQL can be shown below the rows.</p>
+<p><strong>Ask</strong> (the question box at the top of the tab, placeholder "Ask a question about your data", for example "What is the revenue?" or "revenue by country") fills the same controls from a sentence and runs them. The model chooses among your <strong>approved</strong> metrics and their listed dimensions; it never writes SQL, and a name it gets slightly wrong is matched to the closest listed one. The answer says which metric answered and who approved it, and which model chose it. When no approved metric fits, the answer is "No approved metric answers this. Propose one in the Metrics tab." and the Metrics tab opens. When the model's reply cannot be used, the box says so and the controls below still work. Without AI the box is replaced by an offer to install the local model; the manual controls need no AI.</p>
+<p>A metric that is not accepted yet can be run as a preview by anyone who may write to the schema; the result is marked "not approved yet".</p>
+<p>The SQL is generated from the model. Dimensions and filters are checked against it and written as escaped values; free SQL comes only from a metric's expression. The query runs through the same path as the <a href="sql-editor.html">SQL Editor</a>, on the worker.</p>
+<h3 id="how-a-question-is-read">How a question is read</h3>
+<p>The model reads the question and writes a query; Flowfile checks it against the model and the data before anything runs, and never judges the question's wording:</p>
+<ul>
+<li>The model sees each approved metric's name, description, <strong>Also called</strong> words and time column, the columns it may be grouped by and filtered on, and the model's <strong>AI instructions</strong> when they are set (the line under the model's description in the panel header).</li>
+<li>A grouping must be one the metric may be grouped by, a filter must name one of its columns with a valid operator, and a grain needs a time column. A filter value on a group-by column must be one of that column's values; a value that differs only in case is corrected to the stored spelling. Flowfile reads those values itself and does not send them to the model.</li>
+<li>Every answer starts with a <strong>Read as: …</strong> line saying which query ran.</li>
+<li>When part of the model's query cannot be applied, for example a breakdown by a column the metric may not be grouped by, or a filter value the column does not hold, that part is left out and the answer says what is missing after the number: "The average num bikes available is 14.37. It is not split by station: station_id is not among the columns average_num_bikes_available can be grouped by." The answer is marked partial. Nothing is substituted silently.</li>
+<li>The question box shows the model it will use; Cmd/Ctrl+Enter sends it, as does Enter.</li>
+</ul>
+<p><strong>Keep as a flow</strong> names a flow (<strong>Flow name</strong>, then <strong>Save</strong>) and registers the query in the catalog, so it can be scheduled or opened on the canvas.</p>
+<hr />
+<h2 id="export">Export</h2>
+<p><strong>Export YAML</strong> in the header downloads the model as Apache Ossie YAML: descriptions, joins and metrics with their status and history, for tools that read that format.</p>
+<hr />
+<h2 id="limits">Limits</h2>
+<ul>
+<li>A query asks for <strong>one metric</strong>.</li>
+<li>A metric belongs to <strong>one table</strong>. Its formula can read columns of tables joined many to one, never of a table with many rows per row of its own (a metric on customers cannot use a column of orders).</li>
+<li>A join is followed only from the many side to the one side; Flowfile measures the direction when the join is stored but does not check types of the key columns.</li>
+<li>Confidentiality keeps column values from AI, not from people with access to the schema.</li>
+<li>Data rules are per column and run on demand. There are no rules on a whole table, no failing-row samples, and no date range in <strong>Between</strong> or dates in <strong>One of</strong> (use a <strong>Formula</strong> rule). <strong>Unique</strong> counts every copy of a repeated value as failing. Where review is on, two people changing the same column's rules replace each other's list, and removing a column's last rule takes effect at once.</li>
+<li>A saved flow cannot read another schema's table, so a query that reaches across schemas can be run but not kept as a flow.</li>
+<li>Rule-suggested joins from a schema's model stay within that schema; <strong>Suggest joins</strong> on the catalog's page also proposes joins across its schemas. An AI suggestion may join to a table of another schema only when a join already reaches it.</li>
+<li>The checks on a specific suggestion catch a wrong table, column, type or direction, not a wrong meaning: a well-formed metric with a misleading name passes and is caught only in Review.</li>
+<li>The question box applies what the model wrote when it fits the model; it does not check the query against the question's words, so a well-formed query that misreads the question runs. The <strong>Read as</strong> line shows what ran.</li>
+<li>The running-suggestion status lives in the core process: a core restart forgets a running suggestion's status (what it had already proposed stays in Review), and two core processes on one catalog do not see each other's runs.</li>
+<li>Tables whose name contains <code>::</code> are left out of the model.</li>
+<li>Actor names in the history are numeric user ids, stable on one installation only.</li>
+</ul>
+<hr />
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="sql-editor.html">SQL Editor</a> — the query path metrics run on.</li>
+<li><a href="../../../ai/index.html#ai-in-semantic-models">AI Assistant</a> — what AI may and may not do in a model.</li>
+<li><a href="../../projects.html">Projects &amp; Git</a> — tables are saved one file each.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="sql-editor.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: SQL Editor">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                SQL Editor
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="notebooks.html" class="md-footer__link md-footer__link--next" aria-label="Next: Notebooks">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Notebooks
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

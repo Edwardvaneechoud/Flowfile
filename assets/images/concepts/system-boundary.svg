@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 690" role="img" aria-label="Flowfile system boundary: your transformation logic in the center, surrounded by six platform-provided services — secret store, connection layer, scheduler, catalog storage, run history and lineage, and kernel containers.">
+  <style>
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .center{ fill:#f5f6f8; stroke:#9aa0a6; stroke-width:1.5; }
+    .chip  { fill:#eaf3fc; }
+    .chipc { fill:#eceef1; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icc   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .t     { font-family:Roboto,'Helvetica Neue',Arial,sans-serif; font-weight:600; font-size:14.5px; fill:#233588; }
+    .tc    { font-family:Roboto,'Helvetica Neue',Arial,sans-serif; font-weight:600; font-size:16px; fill:#233588; }
+    .s     { font-family:Roboto,'Helvetica Neue',Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .conn  { stroke:#cbd5e1; stroke-width:1.4; fill:none; }
+    .bound { fill:none; stroke:#b9c2d0; stroke-width:1.5; stroke-dasharray:6 6; }
+    .lbl   { font-family:Roboto,Arial,sans-serif; font-size:12px; fill:#6b7280; }
+    .lgd   { font-family:Roboto,Arial,sans-serif; font-size:12px; fill:#6b7280; }
+  </style>
+
+  <!-- connectors (behind everything) -->
+  <g class="conn">
+    <line x1="460" y1="330" x2="160" y2="220"/>
+    <line x1="460" y1="330" x2="460" y2="100"/>
+    <line x1="460" y1="330" x2="760" y2="220"/>
+    <line x1="460" y1="330" x2="160" y2="440"/>
+    <line x1="460" y1="330" x2="460" y2="560"/>
+    <line x1="460" y1="330" x2="760" y2="440"/>
+  </g>
+
+  <!-- system boundary -->
+  <rect class="bound" x="30" y="40" width="860" height="584" rx="18"/>
+  <text class="lbl" x="50" y="66">Flowfile platform &#183; provided for you</text>
+
+  <!-- ================= CENTER: your logic ================= -->
+  <g>
+    <rect class="center" x="340" y="274" width="240" height="112" rx="12"/>
+    <rect class="chipc" x="356" y="309" width="44" height="44" rx="9"/>
+    <g class="icc" transform="translate(366,319)">
+      <path d="M11,5 Q8,5 8,8 Q8,11 5,12 Q8,13 8,16 Q8,19 11,19"/>
+      <path d="M13,5 Q16,5 16,8 Q16,11 19,12 Q16,13 16,16 Q16,19 13,19"/>
+    </g>
+    <text class="tc" x="414" y="328">Your logic</text>
+    <text class="s"  x="414" y="349">the transformation</text>
+    <text class="s"  x="414" y="364">code you write</text>
+  </g>
+
+  <!-- ================= TOP-LEFT: kernel containers ================= -->
+  <g>
+    <rect class="box" x="55" y="170" width="210" height="100" rx="11"/>
+    <rect class="chip" x="69" y="199" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(78,208)">
+      <path d="M12,3 L20,7.4 V16.6 L12,21 L4,16.6 V7.4 Z"/>
+      <path d="M4,7.4 L12,11.8 L20,7.4"/>
+      <path d="M12,11.8 V21"/>
+    </g>
+    <text class="t" x="123" y="216">Kernel containers</text>
+    <text class="s" x="123" y="234">caps &#183; pinned deps</text>
+  </g>
+
+  <!-- ================= TOP: secret store ================= -->
+  <g>
+    <rect class="box" x="355" y="50" width="210" height="100" rx="11"/>
+    <rect class="chip" x="369" y="79" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(378,88)">
+      <path d="M12,3 L19,6 V11 C19,15.4 16,18.4 12,20 C8,18.4 5,15.4 5,11 V6 Z"/>
+      <circle cx="12" cy="10" r="1.9" fill="#ffffff"/>
+      <path d="M12,11.9 V15"/>
+      <path d="M12,13.7 H13.6"/>
+    </g>
+    <text class="t" x="423" y="96">Secret store</text>
+    <text class="s" x="423" y="114">Fernet &#183; per-user keys</text>
+  </g>
+
+  <!-- ================= TOP-RIGHT: connection layer ================= -->
+  <g>
+    <rect class="box" x="655" y="170" width="210" height="100" rx="11"/>
+    <rect class="chip" x="669" y="199" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(678,208)">
+      <line x1="6.6" y1="7.4" x2="10.8" y2="16.2"/>
+      <line x1="17.4" y1="7.4" x2="13.2" y2="16.2"/>
+      <line x1="7" y1="6" x2="17" y2="6"/>
+      <circle cx="5" cy="6" r="2" fill="#ffffff"/>
+      <circle cx="19" cy="6" r="2" fill="#ffffff"/>
+      <circle cx="12" cy="18" r="2" fill="#ffffff"/>
+    </g>
+    <text class="t" x="723" y="216">Connection layer</text>
+    <text class="s" x="723" y="234">named references</text>
+  </g>
+
+  <!-- ================= BOTTOM-LEFT: run history &amp; lineage ================= -->
+  <g>
+    <rect class="box" x="55" y="390" width="210" height="100" rx="11"/>
+    <rect class="chip" x="69" y="419" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(78,428)">
+      <path d="M7.5,12 C12,12 12,6.5 16,6.5"/>
+      <path d="M7.5,12 C12,12 12,17.5 16,17.5"/>
+      <circle cx="5.5" cy="12" r="2" fill="#ffffff"/>
+      <circle cx="18" cy="6.5" r="2" fill="#ffffff"/>
+      <circle cx="18" cy="17.5" r="2" fill="#ffffff"/>
+    </g>
+    <text class="t" x="123" y="436">History &amp; lineage</text>
+    <text class="s" x="123" y="454">every run tracked</text>
+  </g>
+
+  <!-- ================= BOTTOM: catalog storage ================= -->
+  <g>
+    <rect class="box" x="355" y="510" width="210" height="100" rx="11"/>
+    <rect class="chip" x="369" y="539" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(378,548)">
+      <ellipse cx="12" cy="6" rx="7" ry="2.6"/>
+      <path d="M5,6 V16 C5,17.4 8.1,18.6 12,18.6 C15.9,18.6 19,17.4 19,16 V6"/>
+      <path d="M5,11 C5,12.4 8.1,13.6 12,13.6 C15.9,13.6 19,12.4 19,11"/>
+    </g>
+    <text class="t" x="423" y="556">Catalog storage</text>
+    <text class="s" x="423" y="574">Delta &#183; versioned</text>
+  </g>
+
+  <!-- ================= BOTTOM-RIGHT: scheduler ================= -->
+  <g>
+    <rect class="box" x="655" y="390" width="210" height="100" rx="11"/>
+    <rect class="chip" x="669" y="419" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(678,428)">
+      <rect x="4" y="5" width="16" height="15" rx="2"/>
+      <line x1="4" y1="9.5" x2="20" y2="9.5"/>
+      <line x1="8" y1="3.5" x2="8" y2="6.5"/>
+      <line x1="16" y1="3.5" x2="16" y2="6.5"/>
+      <circle cx="15.5" cy="15.5" r="3.4" fill="#ffffff"/>
+      <path d="M15.5,13.7 V15.5 L17,16.4"/>
+    </g>
+    <text class="t" x="723" y="436">Scheduler</text>
+    <text class="s" x="723" y="454">cron + table triggers</text>
+  </g>
+
+  <!-- ================= legend ================= -->
+  <g>
+    <rect x="292" y="644" width="16" height="16" rx="3" fill="#eaf3fc" stroke="#1D76D6" stroke-width="1.4"/>
+    <text class="lgd" x="316" y="656">Platform-provided</text>
+    <rect x="470" y="644" width="16" height="16" rx="3" fill="#eceef1" stroke="#9aa0a6" stroke-width="1.4"/>
+    <text class="lgd" x="494" y="656">You author</text>
+  </g>
+</svg>

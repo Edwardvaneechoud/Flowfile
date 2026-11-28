@@ -1,0 +1,199 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 520" role="img" aria-label="A left-versus-right mental model contrasting exporting a file — which forks into stale copies v1, v2 and final_v3 that get emailed around — with publishing to the Flowfile catalog, where one versioned live table with lineage back to its flow is read by a SQL editor, a chart, and a colleague.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
+    </marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .boxg { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .boxb { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .chipg{ fill:#eef0f2; }
+    .chipb{ fill:#eaf3fc; }
+    .icg  { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icb  { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw  { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .tg   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13.5px; fill:#6b7280; }
+    .tb   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13.5px; fill:#233588; }
+    .sg   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#9aa0a6; }
+    .sb   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .hdg  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:15px; fill:#6b7280; }
+    .hdb  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:15px; fill:#1D76D6; }
+    .hsg  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#9aa0a6; }
+    .hsb  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .hubt { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:17px; fill:#ffffff; }
+    .hubs { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#eaf6ff; }
+    .vlbl { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#6b7280; }
+    .arw  { fill:none; stroke:#b3bcc9; stroke-width:1.7; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:3.2; }
+    .rlbl { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12px; fill:#1D76D6; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+  </style>
+
+  <!-- ============ PANEL HEADERS ============ -->
+  <text class="hdg" x="58" y="70">Export a file</text>
+  <text class="hsg" x="58" y="90">one snapshot &#8212; then it goes stale</text>
+  <text class="hdb" x="512" y="70">Publish to the catalog</text>
+  <text class="hsb" x="512" y="90">one live table, many readers</text>
+
+  <!-- ============ LEFT: EXPORT SOURCE ============ -->
+  <g>
+    <rect class="boxg" x="58" y="112" width="150" height="78" rx="11"/>
+    <rect class="chipg" x="70" y="131" width="40" height="40" rx="8"/>
+    <g class="icg" transform="translate(78,139)">
+      <path d="M4,13 V19 a1.5,1.5 0 0 0 1.5,1.5 H18.5 a1.5,1.5 0 0 0 1.5,-1.5 V13"/>
+      <line x1="12" y1="4" x2="12" y2="15"/>
+      <path d="M8,8 L12,4 L16,8"/>
+    </g>
+    <text class="tg" x="120" y="147">Export</text>
+    <text class="sg" x="120" y="164">report.xlsx</text>
+  </g>
+
+  <!-- fork arrows -->
+  <path class="arw" d="M128,190 L92,227" marker-end="url(#ah)"/>
+  <path class="arw" d="M134,191 L198,227" marker-end="url(#ah)"/>
+  <path class="arw" d="M144,189 L316,227" marker-end="url(#ah)"/>
+
+  <!-- ============ LEFT: STALE COPIES ============ -->
+  <g>
+    <rect class="boxg" x="44" y="230" width="92" height="58" rx="9"/>
+    <rect class="chipg" x="52" y="244" width="30" height="30" rx="7"/>
+    <g class="icg" transform="translate(55,247)">
+      <path d="M6,3 H14 L18,7 V20 H6 Z"/>
+      <path d="M14,3 V7 H18"/>
+      <line x1="9.5" y1="12" x2="14.5" y2="12"/>
+      <line x1="9.5" y1="15" x2="14.5" y2="15"/>
+      <line x1="9.5" y1="18" x2="12.5" y2="18"/>
+    </g>
+    <text class="vlbl" x="110" y="264" text-anchor="middle">v1</text>
+  </g>
+  <g>
+    <rect class="boxg" x="152" y="230" width="92" height="58" rx="9"/>
+    <rect class="chipg" x="160" y="244" width="30" height="30" rx="7"/>
+    <g class="icg" transform="translate(163,247)">
+      <path d="M6,3 H14 L18,7 V20 H6 Z"/>
+      <path d="M14,3 V7 H18"/>
+      <line x1="9.5" y1="12" x2="14.5" y2="12"/>
+      <line x1="9.5" y1="15" x2="14.5" y2="15"/>
+      <line x1="9.5" y1="18" x2="12.5" y2="18"/>
+    </g>
+    <text class="vlbl" x="218" y="264" text-anchor="middle">v2</text>
+  </g>
+  <g>
+    <rect class="boxg" x="260" y="230" width="116" height="58" rx="9"/>
+    <rect class="chipg" x="268" y="244" width="30" height="30" rx="7"/>
+    <g class="icg" transform="translate(271,247)">
+      <path d="M6,3 H14 L18,7 V20 H6 Z"/>
+      <path d="M14,3 V7 H18"/>
+      <line x1="9.5" y1="12" x2="14.5" y2="12"/>
+      <line x1="9.5" y1="15" x2="14.5" y2="15"/>
+      <line x1="9.5" y1="18" x2="12.5" y2="18"/>
+    </g>
+    <text class="vlbl" x="338" y="264" text-anchor="middle">final_v3</text>
+  </g>
+
+  <!-- copies to envelope -->
+  <path class="arw" d="M90,289 L150,330" marker-end="url(#ah)"/>
+  <path class="arw" d="M198,290 L198,330" marker-end="url(#ah)"/>
+  <path class="arw" d="M318,289 L251,330" marker-end="url(#ah)"/>
+
+  <!-- ============ LEFT: ENVELOPE / MAILED AROUND ============ -->
+  <g>
+    <rect class="boxg" x="92" y="332" width="206" height="62" rx="11"/>
+    <rect class="chipg" x="104" y="349" width="40" height="40" rx="8"/>
+    <g class="icg" transform="translate(112,357)">
+      <path d="M3,6 H21 V18 H3 Z"/>
+      <path d="M3.6,6.8 L12,12.8 L20.4,6.8"/>
+    </g>
+    <text class="tg" x="154" y="364">Emailed around</text>
+    <text class="sg" x="154" y="381">every inbox differs</text>
+  </g>
+
+  <!-- ============ CYAN ACCENT: PUBLISH INSTEAD ============ -->
+  <path class="arwc" d="M378,278 L558,310" marker-end="url(#ahc)"/>
+  <text class="rlbl" x="470" y="281" text-anchor="middle">publish instead</text>
+
+  <!-- ============ RIGHT: FLOW (producer) ============ -->
+  <g>
+    <rect class="boxb" x="512" y="110" width="184" height="74" rx="11"/>
+    <rect class="chipb" x="524" y="127" width="40" height="40" rx="8"/>
+    <g class="icb" transform="translate(532,135)">
+      <path d="M4,15 L9,9 L14,13 L20,6"/>
+      <circle cx="4" cy="15" r="1.8" fill="#1D76D6"/>
+      <circle cx="9" cy="9" r="1.8" fill="#1D76D6"/>
+      <circle cx="14" cy="13" r="1.8" fill="#1D76D6"/>
+      <circle cx="20" cy="6" r="1.8" fill="#1D76D6"/>
+    </g>
+    <text class="tb" x="576" y="143">Flow</text>
+    <text class="sb" x="576" y="160">produces the table</text>
+  </g>
+
+  <!-- lineage back to flow -->
+  <path class="arw" d="M612,249 L594,187" marker-end="url(#ah)"/>
+  <text class="rlbl" x="558" y="216" text-anchor="end">lineage</text>
+
+  <!-- ============ RIGHT: CATALOG TABLE (hero) ============ -->
+  <rect x="560" y="250" width="200" height="126" rx="16" fill="url(#brand)"/>
+  <g class="icw" transform="translate(643,266) scale(1.35)">
+    <rect x="3" y="4" width="18" height="15" rx="1.6"/>
+    <line x1="3" y1="9" x2="21" y2="9"/>
+    <line x1="9" y1="4" x2="9" y2="19"/>
+    <line x1="15" y1="4" x2="15" y2="19"/>
+    <line x1="3" y1="14" x2="21" y2="14"/>
+  </g>
+  <text class="hubt" x="660" y="338" text-anchor="middle">Catalog table</text>
+  <text class="hubs" x="660" y="360" text-anchor="middle">one live copy, versioned</text>
+
+  <!-- version-history badge -->
+  <circle cx="748" cy="254" r="16" fill="#ffffff" stroke="#1D76D6" stroke-width="1.4"/>
+  <g class="icb" transform="translate(740,246)">
+    <circle cx="8" cy="8" r="6.2"/>
+    <path d="M8,4 V8 L10.6,9.6"/>
+  </g>
+
+  <!-- ============ RIGHT: CONSUMERS ============ -->
+  <path class="arw" d="M760,296 L792,188" marker-end="url(#ah)"/>
+  <path class="arw" d="M760,313 L792,322" marker-end="url(#ah)"/>
+  <path class="arw" d="M760,330 L792,456" marker-end="url(#ah)"/>
+
+  <g>
+    <rect class="boxb" x="795" y="150" width="155" height="72" rx="11"/>
+    <rect class="chipb" x="807" y="167" width="40" height="40" rx="8"/>
+    <g class="icb" transform="translate(815,175)">
+      <rect x="3.5" y="5.5" width="17" height="13" rx="2"/>
+      <path d="M7,10 L10,12 L7,14"/>
+      <line x1="12" y1="14" x2="16" y2="14"/>
+    </g>
+    <text class="tb" x="861" y="185">SQL editor</text>
+    <text class="sb" x="861" y="202">query it</text>
+  </g>
+  <g>
+    <rect class="boxb" x="795" y="286" width="155" height="72" rx="11"/>
+    <rect class="chipb" x="807" y="303" width="40" height="40" rx="8"/>
+    <g class="icb" transform="translate(815,311)">
+      <line x1="4" y1="18.5" x2="20" y2="18.5"/>
+      <line x1="7.5" y1="18.5" x2="7.5" y2="13" stroke-width="2.6"/>
+      <line x1="12" y1="18.5" x2="12" y2="8.5" stroke-width="2.6"/>
+      <line x1="16.5" y1="18.5" x2="16.5" y2="11" stroke-width="2.6"/>
+    </g>
+    <text class="tb" x="861" y="321">Chart</text>
+    <text class="sb" x="861" y="338">visualize it</text>
+  </g>
+  <g>
+    <rect class="boxb" x="795" y="422" width="155" height="72" rx="11"/>
+    <rect class="chipb" x="807" y="439" width="40" height="40" rx="8"/>
+    <g class="icb" transform="translate(815,447)">
+      <circle cx="12" cy="8" r="3"/>
+      <path d="M5.5,19 C5.5,13.5 18.5,13.5 18.5,19"/>
+    </g>
+    <text class="tb" x="861" y="457">Colleague</text>
+    <text class="sb" x="861" y="474">filters it herself</text>
+  </g>
+</svg>

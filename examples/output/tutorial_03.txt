@@ -1,0 +1,34 @@
+● Read data (11)  Supermarket invoices
+│
+● Drop duplicates (12)
+│
+● Filter data (13)
+│
+● Formula (14)
+├─┐
+● │ Filter data (15)
+│ ● Filter data (16)
+├─┘
+● Union data (17)
+│ ● Manual input (18)
+├─┘
+● Join (19)
+shape: (1_000, 5)
+┌────────────┬───────────┬───────────────┬─────────┬─────────┐
+│ invoice_id ┆ city      ┆ customer_type ┆ revenue ┆ target  │
+│ ---        ┆ ---       ┆ ---           ┆ ---     ┆ ---     │
+│ str        ┆ str       ┆ str           ┆ f64     ┆ f64     │
+╞════════════╪═══════════╪═══════════════╪═════════╪═════════╡
+│ INV-00001  ┆ Mandalay  ┆ Member        ┆ 40.41   ┆ 35000.0 │
+│ INV-00002  ┆ Taunggyi  ┆ Normal        ┆ 638.9   ┆ 30000.0 │
+│ INV-00003  ┆ Bago      ┆ Member        ┆ 391.59  ┆ 30000.0 │
+│ INV-00004  ┆ Naypyitaw ┆ Member        ┆ 173.16  ┆ 25000.0 │
+│ INV-00005  ┆ Bago      ┆ Normal        ┆ 448.96  ┆ 30000.0 │
+│ …          ┆ …         ┆ …             ┆ …       ┆ …       │
+│ INV-00996  ┆ Bago      ┆ Normal        ┆ 514.71  ┆ 30000.0 │
+│ INV-00997  ┆ Taunggyi  ┆ Member        ┆ 536.1   ┆ 30000.0 │
+│ INV-00998  ┆ Bago      ┆ Normal        ┆ 288.33  ┆ 30000.0 │
+│ INV-00999  ┆ Taunggyi  ┆ Member        ┆ 846.9   ┆ 30000.0 │
+│ INV-01000  ┆ Yangon    ┆ Normal        ┆ 451.2   ┆ 35000.0 │
+└────────────┴───────────┴───────────────┴─────────┴─────────┘
+Invoices without a target: 0
