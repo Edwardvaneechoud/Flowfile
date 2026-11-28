@@ -22,6 +22,7 @@ from functools import partial
 from pathlib import Path
 
 import yaml
+from fastapi import HTTPException
 from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import IntegrityError
 
@@ -44,6 +45,7 @@ from flowfile_core.database.models import (
     FlowSchedule,
     GlobalArtifact,
     Kernel,
+    SharePointConnection,
     User,
 )
 from flowfile_core.fileExplorer.funcs import _is_contained
@@ -60,7 +62,12 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
 from flowfile_core.project import kinds, manifest, projection, repository
-from flowfile_core.project.manifest_entries import CloudConnectionEntry, DatabaseConnectionEntry, SchemaColumn
+from flowfile_core.project.manifest_entries import (
+    CloudConnectionEntry,
+    DatabaseConnectionEntry,
+    SchemaColumn,
+    SharePointConnectionEntry,
+)
 from flowfile_core.project.models import SetupResult
 from flowfile_core.project.normalize import atomic_write, dump_yaml, safe_stem
 from flowfile_core.project.projection import _CLOUD_PLAIN_FIELDS, _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
@@ -72,6 +79,7 @@ from flowfile_core.secret_manager.secret_manager import (
     SecretInput,
     decrypt_secret,
     get_encrypted_secret,
+    stage_encrypted_secret,
     store_secret,
 )
 from shared.flow_merge.conflict import is_conflicted
@@ -394,6 +402,40 @@ def _import_cloud_connection(data: dict, owner_id: int, dotenv: dict, result: Se
             store_cloud_connection(db, conn, owner_id)
     result.imported_connections += 1
     return name
+
+
+def _import_sharepoint_connection(data: dict, owner_id: int, dotenv: dict, result: SetupResult) -> str | None:
+    from flowfile_core.routes.sharepoint_connections import _parse_site_url
+
+    entry = SharePointConnectionEntry.model_validate(data)
+    if entry.default_site_url:
+        _parse_site_url(entry.default_site_url)
+    identity = str(entry.connection_uuid)
+    target = (str(entry.tenant_id), str(entry.client_id), entry.auth_method, entry.default_site_url)
+    with get_db_context() as db:
+        existing = db.query(SharePointConnection).filter_by(user_id=owner_id, connection_uuid=identity).one_or_none()
+        if existing is not None:
+            if target != (existing.tenant_id, existing.client_id, existing.auth_method, existing.default_site_url):
+                raise ValueError("A project cannot change a saved SharePoint connection's authentication target.")
+            existing.connection_name = entry.connection_name
+        else:
+            name = placeholder_name(entry.credential)
+            assert name is not None  # validated by the manifest model
+            # Import must not borrow a shared credential or unseal somebody else's connection.
+            value = resolve(name, dotenv)
+            if not value:
+                result.placeholder_secrets.append(name)
+                return None
+            secret = stage_encrypted_secret(db, name=name, value=value, user_id=owner_id)
+            db.flush()
+            db.add(SharePointConnection(
+                connection_uuid=identity, connection_name=entry.connection_name,
+                tenant_id=target[0], client_id=target[1], auth_method=entry.auth_method,
+                default_site_url=entry.default_site_url, credential_secret_id=secret.id, user_id=owner_id,
+            ))
+        db.commit()
+    result.imported_connections += 1
+    return identity
 
 
 def _create_namespace(
@@ -1050,6 +1092,42 @@ def _runtime_flow_text(path: Path, data: dict) -> str:
     return dump_yaml(data)
 
 
+def _bind_project_sharepoint_nodes(db, data: dict, owner_id: int, local: dict | None = None) -> None:
+    from flowfile_core.routes.sharepoint_connections import _resolve_connection
+
+    previous_nodes = (local or {}).get("nodes")
+    local_nodes = {}
+    if isinstance(previous_nodes, list):
+        for node in previous_nodes:
+            if isinstance(node, dict) and type(node.get("id")) is int and isinstance(node.get("type"), str):
+                local_nodes[node["id"], node["type"]] = node
+    for node in data.get("nodes") or []:
+        if node.get("type") not in {"sharepoint_reader", "sharepoint_writer"} or not isinstance(
+            settings := node.get("setting_input"), dict
+        ):
+            continue
+        identity = settings.get("sharepoint_connection_uuid")
+        settings["connection_id"] = None  # never trust a numeric ID from the incoming project
+        if isinstance(identity, str):
+            connection = db.query(SharePointConnection).filter(
+                SharePointConnection.user_id == owner_id, SharePointConnection.connection_uuid == identity,
+                SharePointConnection.auth_method.in_(("client_secret", "certificate")),
+            ).one_or_none()
+            if connection is not None:
+                settings["connection_id"] = connection.id
+        elif type(node.get("id")) is int:
+            previous = local_nodes.get((node["id"], node["type"]), {}).get("setting_input")
+            local_id = previous.get("connection_id") if isinstance(previous, dict) else None
+            if type(local_id) is not int:
+                continue
+            try:
+                connection, _ = _resolve_connection(db, owner_id, local_id)
+            except HTTPException:
+                continue  # revoked access or unavailable credentials
+            if node["type"] != "sharepoint_writer" or connection.auth_method != "delegated":
+                settings["connection_id"] = connection.id
+
+
 def _import_flow(data: dict, owner_id: int) -> str | None:
     """Import one flow; returns the effective flow_uuid (the minted one on a cross-owner collision) or
     None when there is nothing to import."""
@@ -1089,6 +1167,16 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                     # On a multi-user server the import never writes outside the flow folders; the flow is skipped.
                     logger.warning("Project import: flow %s not written — %s", flow_uuid, exc)
                     return None
+            local = None
+            if existing is not None and any(
+                node.get("type") in {"sharepoint_reader", "sharepoint_writer"} for node in data.get("nodes") or []
+            ):
+                try:
+                    previous = _read_yaml(runtime_path)
+                    local = previous if isinstance(previous, dict) else None
+                except (OSError, yaml.YAMLError, ImportTooLargeError):
+                    logger.warning("Could not read prior settings for flow %s", flow_uuid)
+            _bind_project_sharepoint_nodes(db, data, owner_id, local)
         _stage_file(runtime_path, _runtime_flow_text(runtime_path, data), f"write the flow file of {catalog_name!r}")
         # Load (with owner_id so cloud connections resolve) but don't open an editor session: project
         # import must not auto-open flows on the canvas. The user opens a flow explicitly via /import_flow/.
@@ -1733,10 +1821,12 @@ def _validate_project_file(rel: str, kind: str, text: str) -> None:
                 NotebookCellModel.model_validate(cell)
             except ValidationError as e:
                 _check_file(rel, False, f"has an invalid cell {i + 1} ({_invalid_fields(e)})")
-    elif kind in ("database_connection", "cloud_connection"):
+    elif kind in ("database_connection", "cloud_connection", "sharepoint_connection"):
         try:
             if kind == "database_connection":
                 DatabaseConnectionEntry.model_validate(data)
+            elif kind == "sharepoint_connection":
+                SharePointConnectionEntry.model_validate(data)
             else:
                 entry = CloudConnectionEntry.model_validate(data)
                 FullCloudStorageConnection(
@@ -1899,6 +1989,7 @@ _IMPORT_STEPS = {
     "secrets": _secrets_step,
     "database_connection": partial(_connections_step, _import_db_connection),
     "cloud_connection": partial(_connections_step, _import_cloud_connection),
+    "sharepoint_connection": partial(_connections_step, _import_sharepoint_connection),
     "namespaces": partial(_manifest_step, _import_namespaces),
     "flow": _flows_step,
     "schedule": _schedules_step,

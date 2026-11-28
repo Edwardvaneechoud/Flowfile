@@ -47,7 +47,7 @@ _FL_CALLS = (
     "read_database", "read_kafka", "read_api", "read_from_cloud_storage", "read_catalog_table", "read_catalog_sql",
     "write_catalog_table", "write_database", "write_to_cloud_storage", "Gate", "FlowGroup", "RunFlow", "PythonScript",
     "polars_code", "sql", "canvas_node", "FlowInput", "flow_ref", "concat", "FuzzyMapping", "Parameter",
-    "add_flow_parameter", "explore",
+    "add_flow_parameter", "explore", "read_sharepoint",
 )  # fmt: skip
 _CORE_CLASSES = (
     "FlowGraph", "FlowDataEngine", "FlowNode", "FlowSettings", "FlowInformation", "FlowfileColumn",
@@ -112,7 +112,7 @@ _FRAME_METHODS = (
     "filter_split", "fuzzy_join", "group_by", "head", "join", "multi_field_formula", "pivot", "polars_code",
     "random_split", "rename", "sample", "select", "solve_graph", "sort", "text_to_rows", "to_flow_output",
     "train_model", "unique", "unpivot", "wait_for", "with_columns", "with_row_index", "write_csv", "write_excel",
-    "write_parquet",
+    "write_parquet", "write_sharepoint",
 )  # fmt: skip
 _EXPR_METHODS = (
     "alias", "cast", "count", "first", "last", "max", "mean", "median", "min", "n_unique", "std", "sum", "var", "over",

@@ -48,6 +48,7 @@ TWELVE = [
     "secrets",
     "database_connection",
     "cloud_connection",
+    "sharepoint_connection",
     "namespaces",
     "flow",
     "schedule",

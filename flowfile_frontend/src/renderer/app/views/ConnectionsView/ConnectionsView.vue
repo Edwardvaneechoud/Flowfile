@@ -23,6 +23,7 @@
       <CloudConnectionView v-else-if="activeTab === 'cloud'" />
       <KafkaConnectionView v-else-if="activeTab === 'kafka'" />
       <GoogleAnalyticsConnectionView v-else-if="activeTab === 'google_analytics'" />
+      <SharepointReader v-else-if="activeTab === 'sharepoint'" manage-only />
       <SecretsView v-else-if="activeTab === 'secrets'" />
     </div>
   </div>
@@ -35,6 +36,8 @@ import DatabaseView from "../DatabaseView/DatabaseView.vue";
 import CloudConnectionView from "../CloudConnectionView/CloudConnectionView.vue";
 import KafkaConnectionView from "../KafkaConnectionView/KafkaConnectionView.vue";
 import GoogleAnalyticsConnectionView from "../GoogleAnalyticsConnectionView/GoogleAnalyticsConnectionView.vue";
+import SharepointReader from "../../components/nodes/node-types/elements/sharepointReader/SharepointReader.vue";
+import axios from "../../services/axios.config";
 import SecretsView from "../SecretsView/SecretsView.vue";
 import ConnectionsOverview from "./ConnectionsOverview.vue";
 import { connectionTypes } from "./connectionTypes";
@@ -48,7 +51,7 @@ import { fetchSecretsApi } from "../../api/secrets.api";
 const route = useRoute();
 const router = useRouter();
 
-// The five real connection sections (also the persisted ?tab= values), plus the
+// The real connection sections (also the persisted ?tab= values), plus the
 // synthetic "overview" landing which is never remembered.
 const sectionKeys = connectionTypes.map((t) => t.key);
 type ActiveTab = ConnectionTypeKey | "overview";
@@ -123,6 +126,7 @@ async function loadCounts() {
     ["cloud", fetchCloudStorageConnectionsInterfaces().then((r) => r.length)],
     ["kafka", fetchKafkaConnections().then((r) => r.length)],
     ["google_analytics", fetchGoogleAnalyticsConnections().then((r) => r.length)],
+    ["sharepoint", axios.get<unknown[]>("/sharepoint_connections").then(({ data }) => data.length)],
     ["secrets", fetchSecretsApi().then((r) => r.length)],
   ];
   const settled = await Promise.allSettled(tasks.map(([, p]) => p));

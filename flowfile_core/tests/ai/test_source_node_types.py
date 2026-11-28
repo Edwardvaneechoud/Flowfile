@@ -29,6 +29,7 @@ EXPECTED_SOURCE_TYPES = {
     "manual_input",
     "read",
     "rest_api_reader",
+    "sharepoint_reader",
 }
 
 # LLM-facing prompts that inline the source list. They're static text (no

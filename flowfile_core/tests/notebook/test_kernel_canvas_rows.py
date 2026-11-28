@@ -843,21 +843,26 @@ def test_an_edited_script_or_source_cell_is_run_by_core_from_its_settings(
     assert [body["node"]["type"] for body in locking_kernel_sim.node_runs] == ["python_script"]
 
 
-def _interrupted_cell(client, flow, sim) -> tuple[dict, float]:
-    """Collect the filter while the script's kernel is busy, Stop the cell once its canvas run started, and
-    return its result: the run waits on ``OTHER_KERNEL``, whose lock this holds meanwhile."""
+def _interrupted_cell(client, flow, sim, monkeypatch) -> tuple[dict, float]:
+    """Stop the cell once its canvas run reaches the busy script kernel, then return its result."""
     import threading
+
+    waiting = threading.Event()
+    execute_sync = sim.execute_sync
+
+    def signal_kernel_wait(kernel_id, request, flow_logger=None, cancel_event=None):
+        if kernel_id == OTHER_KERNEL:
+            waiting.set()
+        return execute_sync(kernel_id, request, flow_logger, cancel_event)
 
     held = sim._locks.setdefault(OTHER_KERNEL, threading.Lock())
     held.acquire()
     results: list = []
     try:
+        monkeypatch.setattr(sim, "execute_sync", signal_kernel_wait)
         cell = threading.Thread(target=lambda: results.append(_collect_filter(client, flow, sim)))
         cell.start()
-        deadline = time.monotonic() + sim.LOCK_WAIT
-        while not flow.flow_settings.is_running and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert flow.flow_settings.is_running, "the cell's canvas run started"
+        assert waiting.wait(timeout=sim.LOCK_WAIT), "the canvas run reached the busy script kernel"
         answer = client.post("/notebook/session/interrupt", json={"flow_id": flow.flow_id, "kernel_id": sim.kernel.id})
         assert answer.status_code == 200 and answer.json()["status"] == "interrupted", answer.text
         cell.join(timeout=sim.LOCK_WAIT)
@@ -867,17 +872,53 @@ def _interrupted_cell(client, flow, sim) -> tuple[dict, float]:
     return results[0]
 
 
-def test_interrupting_a_cell_cancels_the_canvas_run_it_waits_on(scripted_flow, locking_client, locking_kernel_sim):
+def test_interrupting_a_cell_cancels_the_canvas_run_it_waits_on(
+    scripted_flow, locking_client, locking_kernel_sim, monkeypatch
+):
     flow = scripted_flow(OTHER_KERNEL, mode="Performance")
-    result, took = _interrupted_cell(locking_client, flow, locking_kernel_sim)
+    result, took = _interrupted_cell(locking_client, flow, locking_kernel_sim, monkeypatch)
     assert not result["success"] and took < locking_kernel_sim.LOCK_WAIT, result
     assert "cancel" in result["error"].lower(), result
 
 
-def test_after_stop_the_cell_runs_again(scripted_flow, locking_client, locking_kernel_sim):
+def test_after_stop_the_cell_runs_again(scripted_flow, locking_client, locking_kernel_sim, monkeypatch):
     flow = scripted_flow(OTHER_KERNEL, run=False)
     flow.flow_settings.execution_location = "remote"
-    result, _ = _interrupted_cell(locking_client, flow, locking_kernel_sim)
+    result, _ = _interrupted_cell(locking_client, flow, locking_kernel_sim, monkeypatch)
+    assert not result["success"] and "cancel" in result["error"].lower(), result
+    again, _ = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert again["success"] and again["stdout"].strip() == "2", again
+
+
+def test_stop_before_remote_canvas_execution(scripted_flow, locking_client, locking_kernel_sim, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    flow = scripted_flow(OTHER_KERNEL, run=False)
+    flow.flow_settings.execution_location = "remote"
+    started, resume = Event(), Event()
+    bump_revision = flow._bump_revision
+
+    def pause_after_claim(event, *args, **kwargs):
+        result = bump_revision(event, *args, **kwargs)
+        if event == "run_started":
+            started.set()
+            assert resume.wait(timeout=10), "test did not release the run"
+        return result
+
+    with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=1) as pool:
+        patch.setattr(flow, "_bump_revision", pause_after_claim)
+        pending = pool.submit(_collect_filter, locking_client, flow, locking_kernel_sim)
+        try:
+            assert started.wait(timeout=5), "the cell claimed the canvas run"
+            answer = locking_client.post(
+                "/notebook/session/interrupt", json={"flow_id": flow.flow_id, "kernel_id": locking_kernel_sim.kernel.id}
+            )
+            assert answer.status_code == 200 and answer.json()["status"] == "interrupted", answer.text
+        finally:
+            resume.set()
+        result, _ = pending.result(timeout=5)
+
     assert not result["success"] and "cancel" in result["error"].lower(), result
     again, _ = _collect_filter(locking_client, flow, locking_kernel_sim)
     assert again["success"] and again["stdout"].strip() == "2", again

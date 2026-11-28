@@ -447,6 +447,12 @@ def _run_lineage(flow, node, kernel_id: str) -> None:
     from flowfile_core.routes.routes import _resolve_node_kernel_id
 
     lineage = {node.node_id, *flow._get_upstream_node_ids(node.node_id)}
+    if any(
+        (upstream := flow.get_node(node_id)) is not None
+        and upstream.node_type in {"sharepoint_reader", "sharepoint_writer"}
+        for node_id in lineage
+    ):
+        raise HTTPException(409, "Run the SharePoint nodes on the canvas before collecting their results in a cell.")
     running = "The flow is running on the canvas; run the cell again when it has finished"
     if flow.flow_settings.is_running:
         raise HTTPException(409, running)
@@ -551,6 +557,8 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(404, f"Node {node_id} is no longer on the canvas: Reset session to pick up the canvas")
+    # A live session and a cached result do not grant access to the node's sources.
+    node.require_source_access()
     handle = output_handle or DEFAULT_OUTPUT_HANDLE
     if not _has_result(flow, node):
         _run_lineage(flow, node, kernel_id)

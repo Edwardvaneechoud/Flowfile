@@ -137,7 +137,7 @@ def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
         # (user_id, name) is not unique at the DB level; order by id so resolution
         # is deterministic. An own secret always shadows a granted one.
         db_secret = (
-            db.query(db_models.Secret)
+            db.query(db_models.Secret).filter(sharing.public_secret_filter())
             .filter(and_(db_models.Secret.user_id == user_id, db_models.Secret.name == secret_name))
             .order_by(db_models.Secret.id.asc())
             .first()
@@ -150,7 +150,7 @@ def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
         granted_ids = sharing.granted_resource_ids(db, user_id, "secret")
         if granted_ids:
             shared_secret = (
-                db.query(db_models.Secret)
+                db.query(db_models.Secret).filter(sharing.public_secret_filter())
                 .filter(db_models.Secret.name == secret_name, db_models.Secret.id.in_(granted_ids))
                 .order_by(db_models.Secret.id.asc())
                 .first()
@@ -160,16 +160,20 @@ def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
         return None
 
 
-def store_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Secret:
-    encrypted_value = encrypt_secret(secret.value.get_secret_value(), user_id)
-
+def stage_encrypted_secret(db: Session, *, name: str, value: str, user_id: int) -> db_models.Secret:
+    """Add an encrypted secret without committing the caller's transaction."""
     db_secret = db_models.Secret(
-        name=secret.name,
-        encrypted_value=encrypted_value,
+        name=name,
+        encrypted_value=encrypt_secret(value, user_id),
         iv="",  # Legacy field, not used with current encryption
         user_id=user_id,
     )
     db.add(db_secret)
+    return db_secret
+
+
+def store_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Secret:
+    db_secret = stage_encrypted_secret(db, name=secret.name, value=secret.value.get_secret_value(), user_id=user_id)
     db.commit()
     db.refresh(db_secret)
     return db_secret
@@ -182,7 +186,7 @@ def upsert_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.S
     than inserting a duplicate — this is how placeholder secrets get their value filled.
     """
     existing = (
-        db.query(db_models.Secret)
+        db.query(db_models.Secret).filter(sharing.public_secret_filter())
         .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret.name)
         .order_by(db_models.Secret.id.asc())
         .first()
@@ -197,7 +201,7 @@ def upsert_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.S
 
 def delete_secret(db: Session, secret_name: str, user_id: int) -> None:
     db_secret = (
-        db.query(db_models.Secret)
+        db.query(db_models.Secret).filter(sharing.public_secret_filter())
         .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret_name)
         .first()
     )

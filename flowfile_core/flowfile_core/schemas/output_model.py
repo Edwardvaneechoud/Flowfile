@@ -285,6 +285,7 @@ class NodeData(BaseModel):
     settings_fingerprint: str | None = None
     # The warning shown when predicting columns here would mean running an un-run kernel node.
     prediction_warning: str | None = None
+    sharepoint_worksheet_names: list[str] | None = None
 
 
 class OutputFile(BaseItem):

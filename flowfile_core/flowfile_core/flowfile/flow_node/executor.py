@@ -43,6 +43,7 @@ so otherwise no backend computes or samples their rows during the run."""
 OPERATION_NODE_TYPES = frozenset(
     {
         "database_writer",
+        "sharepoint_writer",
         "cloud_storage_writer",
         "catalog_writer",
         "fuzzy_match",

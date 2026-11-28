@@ -27,6 +27,8 @@ const SVG_NODE_ICONS = [
   "fuzzy_match.svg",
   "gate.svg",
   "google_analytics.svg",
+  "sharepoint_reader.svg",
+  "sharepoint_writer.svg",
   "graph_solver.svg",
   "group_by.svg",
   "input_data.svg",
@@ -58,7 +60,7 @@ const SVG_NODE_ICONS = [
 ];
 
 // Brand/connector marks aren't offered as generic operation glyphs.
-const NON_STANDARD_SVG = new Set(["google_analytics.svg", "kafka_source.svg"]);
+const NON_STANDARD_SVG = new Set(["google_analytics.svg", "kafka_source.svg", "sharepoint_reader.svg", "sharepoint_writer.svg"]);
 
 const DEFAULT_ICON = "user-defined-icon.png"; // persisted contract key (state.py / codegen)
 const DEFAULT_ICON_ASSET = "user-defined-icon.svg"; // bundled artwork for that key

@@ -358,6 +358,7 @@
     "connectionsDatabase": "Database",
     "connectionsCloud": "Cloud Storage",
     "connectionsKafka": "Kafka",
+    "connectionsSharePoint": "SharePoint",
     "connectionsGoogleAnalytics": "Google Analytics",
     "connectionsSecrets": "Secrets",
     "settingsGroupAi": "AI",

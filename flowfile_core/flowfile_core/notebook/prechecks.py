@@ -45,6 +45,8 @@ def placement_refusal(settings: Any, user_id: int | None) -> str | None:
         return _database_refusal(settings.database_write_settings, user_id)
     if isinstance(settings, input_schema.NodeKafkaSource):
         return _kafka_refusal(settings.kafka_settings, user_id)
+    if isinstance(settings, input_schema.NodeSharePointReader | input_schema.NodeSharePointWriter):
+        return _sharepoint_refusal(settings, user_id)
     return None
 
 
@@ -115,3 +117,20 @@ def _kafka_refusal(settings: input_schema.KafkaSourceSettings, user_id: int | No
         if row is None and settings.kafka_connection_name:
             row = get_kafka_connection_by_name(db, settings.kafka_connection_name, user_id)
     return "Kafka connection not found" if row is None else None
+
+
+def _sharepoint_refusal(
+    settings: input_schema.NodeSharePointReader | input_schema.NodeSharePointWriter, user_id: int | None
+) -> str | None:
+    from flowfile_core.routes.sharepoint_connections import _resolve_connection
+
+    if settings.connection_id is None or user_id is None:
+        return "Select a saved SharePoint connection before running this node."
+    try:
+        with get_db_context() as db:
+            connection, _ = _resolve_connection(db, user_id, settings.connection_id)
+            if isinstance(settings, input_schema.NodeSharePointWriter) and connection.auth_method == "delegated":
+                return "SharePoint writing requires an app connection with write access."
+    except HTTPException as exc:
+        return str(exc.detail)
+    return None

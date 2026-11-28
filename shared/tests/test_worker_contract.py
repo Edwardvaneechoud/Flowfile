@@ -450,6 +450,7 @@ def test_every_task_operation_and_the_catalog_columns_have_an_entry():
             "store_sample",
             "write_to_database",
             "write_to_cloud_storage",
+            "write_to_sharepoint",
             "write_parquet",
             "write_delta",
             "merge_delta",

@@ -35,6 +35,7 @@ from flowfile_core.database.models import (
     GlobalArtifact,
     Kernel,
     Secret,
+    SharePointConnection,
 )
 from flowfile_core.project.normalize import (
     dump_yaml,
@@ -139,7 +140,7 @@ def _namespace_path(db: Session, namespace_id: int | None) -> dict | None:
     return {"catalog": parent.name if parent else ns.name, "schema": ns.name}
 
 
-def _reference_lookup(db: Session):
+def _reference_lookup(db: Session, owner_id: int):
     """The names a flow file's node references resolve to on this install, for ``normalize_flow_data``.
 
     A table resolves as the catalog reader resolves it at run time (its id, else its name in its namespace) and is
@@ -151,6 +152,13 @@ def _reference_lookup(db: Session):
     svc = CatalogService(repo)
 
     def lookup(kind: str, settings: dict) -> dict | None:
+        if kind == "sharepoint":
+            conn = (
+                db.query(SharePointConnection).filter_by(id=settings["connection_id"], user_id=owner_id).one_or_none()
+            )
+            if conn is not None and conn.auth_method in {"client_secret", "certificate"}:
+                return {"sharepoint_connection_uuid": conn.connection_uuid}
+            return None
         if kind == "namespace":
             stored = settings.get("namespace_full_name")
             if stored and svc.resolve_namespace_id_by_full_name(stored) is not None:
@@ -200,7 +208,7 @@ def flow_file(db: Session, reg: FlowRegistration, namespace: dict | None = None)
         return None
     st = Path(reg.flow_path).stat()
     stamp = (st.st_mtime_ns, st.st_size, reg.flow_uuid, reg.name, namespace)
-    lookup = _reference_lookup(db)
+    lookup = _reference_lookup(db, reg.owner_id)
     cached = _flow_texts.get(reg.flow_path)
     if cached is not None and cached[1] == stamp and all(lookup(k, s) == a for k, s, a in cached[2]):
         return cached[3]
@@ -293,7 +301,27 @@ def _cloud_connection_dict(db: Session, conn: CloudStorageConnection) -> dict:
 
 
 def export_connections(db: Session, owner_id: int, kind: str) -> dict[str, str]:
-    """``{path: text}`` of the owner's database (``kind="database"``) or cloud connections."""
+    """``{path: text}`` of the owner's portable connections."""
+    if kind == "sharepoint":
+        rows = db.query(SharePointConnection).filter(
+            SharePointConnection.user_id == owner_id,
+            SharePointConnection.auth_method.in_(("client_secret", "certificate")),
+        )
+        return {
+            f"connections/sharepoint/{conn.connection_uuid}.yaml": dump_yaml(
+                {
+                    "kind": "sharepoint_connection",
+                    "connection_uuid": conn.connection_uuid,
+                    "connection_name": conn.connection_name,
+                    "tenant_id": conn.tenant_id,
+                    "client_id": conn.client_id,
+                    "auth_method": conn.auth_method,
+                    "default_site_url": conn.default_site_url,
+                    "credential": make_placeholder(f"sharepoint_{conn.connection_uuid}"),
+                }
+            )
+            for conn in rows
+        }
     if kind == "database":
         rows = db.query(DatabaseConnection).filter(DatabaseConnection.user_id == owner_id)
         render = _db_connection_dict
@@ -372,6 +400,7 @@ def secret_manifest_data(db: Session, owner_id: int) -> dict:
     q = db.query(Secret.name).filter(Secret.user_id == owner_id)
     if linked:
         q = q.filter(~Secret.id.in_(linked))
+    q = q.filter(~Secret.id.in_(select(SharePointConnection.credential_secret_id)))
     return {"required_secrets": sorted({name for (name,) in q} - feature_names)}
 
 

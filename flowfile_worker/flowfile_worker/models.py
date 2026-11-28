@@ -35,6 +35,7 @@ OperationType = Literal[
     "store_sample",
     "write_to_database",
     "write_to_cloud_storage",
+    "write_to_sharepoint",
     "write_parquet",
     "write_delta",
     "merge_delta",

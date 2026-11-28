@@ -32,6 +32,9 @@ export interface UseNodeSettingsOptions<T extends NodeBase> {
    */
   onBeforeSave?: () => boolean | void | Promise<boolean | void>;
 
+  /** Prepare the request without removing fields from the editor draft. */
+  toSavePayload?: (draft: T) => Partial<T>;
+
   /**
    * Optional callback called after settings are successfully saved.
    * Useful for validation, refreshing data, or other post-save operations.
@@ -192,6 +195,7 @@ export function useNodeSettings<T extends NodeBase>(
       return true;
     };
 
+    let payload: { value: Partial<T> | null } = nodeRef;
     try {
       if (autoSetIsSetup && nodeRef.value.is_setup !== undefined) {
         nodeRef.value.is_setup = true;
@@ -199,14 +203,15 @@ export function useNodeSettings<T extends NodeBase>(
 
       // The fingerprint the node loaded with: core refuses the save when the settings moved since.
       const fingerprint = loadedSettingsFingerprint(nodeRef.value.node_id);
+      payload = options.toSavePayload ? { value: options.toSavePayload(nodeRef.value) } : nodeRef;
       await (fingerprint
-        ? nodeStore.updateSettings(nodeRef, undefined, batch, { expectedFingerprint: fingerprint })
-        : nodeStore.updateSettings(nodeRef, undefined, batch));
+        ? nodeStore.updateSettings(payload, undefined, batch, { expectedFingerprint: fingerprint })
+        : nodeStore.updateSettings(payload, undefined, batch));
       return await saved();
     } catch (error) {
       if (isSettingsConflict(error)) {
         const outcome = await resolveSettingsConflict(error, async () => {
-          await nodeStore.updateSettings(nodeRef, undefined, batch);
+          await nodeStore.updateSettings(payload, undefined, batch);
         });
         if (outcome === "saved") return await saved();
         if (outcome === "discarded") {

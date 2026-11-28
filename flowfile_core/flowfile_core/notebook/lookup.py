@@ -39,6 +39,8 @@ PRECHECKED_SETTINGS: tuple[str, ...] = (
     "NodeDatabaseReader",
     "NodeDatabaseWriter",
     "NodeKafkaSource",
+    "NodeSharePointReader",
+    "NodeSharePointWriter",
 )
 """The settings classes ``notebook.prechecks.placement_refusal`` looks up a connection for."""
 

@@ -47,6 +47,7 @@ def test_source_set_includes_all_readers() -> None:
         "kafka_source",
         "google_analytics_reader",
         "rest_api_reader",
+        "sharepoint_reader",
         "external_source",
         # Flow-in-flow entry point: no input port, source-shaped.
         "flow_input",
@@ -56,11 +57,9 @@ def test_source_set_includes_all_readers() -> None:
 
 
 def test_static_includes_writers_and_models() -> None:
-    """Writers (database_writer / cloud_storage_writer / catalog_writer) and ML
-    nodes (train/apply/evaluate_model) are static — schema is passthrough or
-    fixed."""
+    """Writers and ML nodes are static — their schema is passthrough or fixed."""
     static_set = {nt for nt in NODE_TYPE_TO_SETTINGS_CLASS if classify_node_type(nt) == "static"}
-    assert {"database_writer", "cloud_storage_writer", "catalog_writer"} <= static_set
+    assert {"database_writer", "cloud_storage_writer", "catalog_writer", "sharepoint_writer"} <= static_set
     assert {"train_model", "apply_model", "evaluate_model"} <= static_set
 
 

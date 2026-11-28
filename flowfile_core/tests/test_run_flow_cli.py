@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -55,7 +56,7 @@ def test_run_flow_child_leaves_cache_and_temp_alone(tmp_path, monkeypatch, comma
     scratch = _plant_stale(storage_dir / "temp" / "stale.txt", age_hours=48)
     env = {
         **os.environ,
-        "FLOWFILE_DB_PATH": str(tmp_path / "catalog.db"),
+        "FLOWFILE_DATABASE_URL": f"sqlite:///{tmp_path / 'catalog.db'}",
         "FLOWFILE_STORAGE_DIR": str(storage_dir),
         "FLOWFILE_USER_DATA_DIR": str(tmp_path / "user_data"),
         "FLOWFILE_TELEMETRY": "0",
@@ -82,10 +83,10 @@ def _frozen_runner(flow_path: str, backend: str | None = None) -> int:
     return run_flow_cli(flow_path, int(RUN_ID), backend=backend)
 
 
-def _dev_runner(flow_path: str, backend: str | None = None) -> int:
+def _dev_runner(flow_path: str, backend: str | None = None, *, run_id: int | None = None) -> int:
     from flowfile.__main__ import run_flow
 
-    return run_flow(flow_path, backend=backend)
+    return run_flow(flow_path, run_id=run_id, backend=backend)
 
 
 @pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
@@ -141,18 +142,85 @@ def counting() -> list[CountingBackend]:
 
 
 @pytest.fixture
-def in_process_run(monkeypatch):
+def run_catalog(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from shared import run_completion
+    from shared.models import FlowRun
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    FlowRun.__table__.create(engine)
+    monkeypatch.setattr(run_completion, "get_catalog_engine", lambda _: engine)
+    try:
+        with Session(engine) as session:
+            yield session
+    finally:
+        engine.dispose()
+
+
+def _seed_managed_run(session):
+    from shared.models import FlowRun
+
+    session.add(FlowRun(id=int(RUN_ID), flow_name="Headless test", user_id=1, started_at=datetime.now(UTC)))
+    session.commit()
+
+
+@pytest.fixture
+def subprocess_run_catalog(tmp_path, monkeypatch):
+    """The CLI child opens a real, already migrated catalog containing its run."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from flowfile_core.database.migration import run_alembic_upgrade
+
+    url = f"sqlite:///{tmp_path / 'catalog.db'}"
+    with monkeypatch.context() as patch:
+        patch.setenv("FLOWFILE_DATABASE_URL", url)
+        run_alembic_upgrade()
+    engine = create_engine(url)
+    try:
+        with Session(engine) as session:
+            _seed_managed_run(session)
+    finally:
+        engine.dispose()
+    return url
+
+
+@pytest.fixture
+def in_process_run(monkeypatch, run_catalog):
     """A runner called in this process installs no telemetry, and the default override it sets and the pool size its
     embedded worker takes are undone after."""
     from flowfile_core import telemetry
     from flowfile_core.flowfile.execution import registry
     from flowfile_worker import pool
 
+    _seed_managed_run(run_catalog)
     monkeypatch.setattr(telemetry, "install_headless", lambda: None)
     monkeypatch.setattr(pool.task_pool, "_size", pool.task_pool._size)
     previous = registry.default_override()
     yield
     registry.set_default_override(previous)
+
+
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_managed_run_without_a_record_stops_before_loading_flow(tmp_path, monkeypatch, run_catalog, runner):
+    from flowfile_core.flowfile.execution import registry
+    from flowfile_core.flowfile.manage import io_flowfile
+
+    path = tmp_path / "flow.yaml"
+    path.touch()
+
+    def unexpected_load(*args, **kwargs):
+        pytest.fail("Must not load a flow without a run owner")
+
+    monkeypatch.setattr(io_flowfile, "open_flow", unexpected_load)
+    options = {"run_id": int(RUN_ID)} if runner is _dev_runner else {}
+    previous = registry.default_override()
+    try:
+        assert runner(str(path), **options) == 1
+    finally:
+        registry.set_default_override(previous)
 
 
 @pytest.fixture
@@ -207,8 +275,7 @@ def _record_embedded_submits(monkeypatch) -> list[tuple[str, int | str]]:
 
 
 def _record_job_pids(monkeypatch, pid_file: Path) -> None:
-    """Every plan with a column ``a`` an ``EmbeddedWorkerBackend`` gets from here on, but the handshake's, calls a Python
-    function on it that appends the pid of the process running the plan to ``pid_file``."""
+    """Record the PID for embedded-worker plans with column ``a``, except the handshake plan."""
     path = str(pid_file)
 
     def record_pid(series):
@@ -499,10 +566,13 @@ def test_a_spawned_run_passes_backend_only_when_its_request_names_one(tmp_path, 
 
 @pytest.mark.parametrize("flag", ["0", "1"], ids=["flag-off", "flag-on"])
 @pytest.mark.parametrize("command", [_frozen_verb, _dev_verb], ids=["frozen-verb", "dev-cli"])
-def test_a_headless_run_on_backend_worker_runs_on_the_worker(tmp_path, session_worker, command, flag):
+def test_a_headless_run_on_backend_worker_runs_on_the_worker(
+    tmp_path, session_worker, command, flag, subprocess_run_catalog
+):
     flow_path = str(_save_group_by_flow(tmp_path / "flow.yaml"))
     env = {
         **os.environ,
+        "FLOWFILE_DATABASE_URL": subprocess_run_catalog,
         "FLOWFILE_COMPUTE_PROTOCOL": flag,
         "FLOWFILE_TELEMETRY": "0",
         "FLOWFILE_WORKER_URL": session_worker,

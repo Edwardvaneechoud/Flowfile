@@ -331,6 +331,7 @@ def test_the_registry_holds_the_twelve_kinds_in_import_order():
         "secrets",
         "database_connection",
         "cloud_connection",
+        "sharepoint_connection",
         "namespaces",
         "flow",
         "schedule",
@@ -367,6 +368,7 @@ def test_derived_values_are_what_they_were():
         ":(literal)dashboards.yaml",
         ":(glob)connections/database/*.yaml",
         ":(glob)connections/cloud/*.yaml",
+        ":(glob)connections/sharepoint/*.yaml",
         ":(glob)flows/*.flow.yaml",
         ":(glob)schedules/*.yaml",
         ":(glob)tables/*.table.yaml",
@@ -379,6 +381,7 @@ def test_derived_values_are_what_they_were():
         "schedules/sales.yaml": (("schedule", "sales"), "schedule"),
         "connections/database/prod.yaml": (("database connection", "prod"), "database_connection"),
         "connections/cloud/lake.yaml": (("cloud connection", "lake"), "cloud_connection"),
+        "connections/sharepoint/site.yaml": (("SharePoint connection", "site"), "sharepoint_connection"),
         "notebooks/eda.notebook.yaml": (("notebook", "eda"), "notebook"),
         "secrets.yaml": (("secrets", "secrets"), "secrets"),
         "namespaces.yaml": (("namespaces", "namespaces"), "namespaces"),
@@ -403,6 +406,7 @@ def test_derived_values_are_what_they_were():
         "secrets": None,
         "database_connection": 200,
         "cloud_connection": 200,
+        "sharepoint_connection": 200,
         "namespaces": 200,
         "flow": 500,
         "schedule": 500,
@@ -451,3 +455,17 @@ def test_a_rewrite_in_other_letter_case_leaves_one_file(tmp_path):
     files = list((root / "flows").iterdir())
     assert len(files) == 1
     assert files[0].read_text(encoding="utf-8") == "new\n"
+
+
+
+def test_sharepoint_connections_with_the_same_name_are_compared_by_uuid():
+    from flowfile_core.project import kinds
+
+    first, second = (f"connections/sharepoint/{key}.yaml" for key in ("first", "second"))
+    saved = {
+        first: "connection_uuid: first\nconnection_name: Finance\n",
+        second: "connection_uuid: second\nconnection_name: Finance\n",
+    }
+    updated = {**saved, first: saved[first] + "tenant_id: changed\n"}
+    [change] = kinds.compare(saved, updated, kinds={"sharepoint_connection"})
+    assert (change.key, change.label, change.path) == ("first", "Finance", first)

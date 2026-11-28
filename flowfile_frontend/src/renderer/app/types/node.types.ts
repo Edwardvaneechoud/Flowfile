@@ -67,6 +67,7 @@ export interface NodeData {
   settings_fingerprint?: string | null;
   /** Column prediction needs an un-run kernel node to run first; warning text to show. */
   prediction_warning?: string | null;
+  sharepoint_worksheet_names?: string[] | null;
 }
 
 export interface NodeValidationInput {

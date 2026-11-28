@@ -2726,6 +2726,50 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
             return path
         return file_settings.abs_file_path
 
+    def _handle_sharepoint_reader(
+        self, settings: input_schema.NodeSharePointReader, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        self._add_code(f"{var_name} = ff.read_sharepoint(")
+        self._add_code(f"    {settings.connection_id!r},")
+        if settings.list_source is None:
+            self._add_code(f"    drive_id={settings.drive_id!r},")
+            self._add_code(f"    file_path={settings.file_path!r},")
+        else:
+            self._add_code(f"    list_source={settings.list_source.model_dump(exclude_none=True)!r},")
+        if settings.sheet_name is not None:
+            self._add_code(f"    sheet_name={settings.sheet_name!r},")
+        if settings.csv_delimiter != ",":
+            self._add_code(f"    csv_delimiter={settings.csv_delimiter!r},")
+        if settings.delta_generation is not None:
+            self._add_code(f"    delta_generation={settings.delta_generation!r},")
+        self._add_code(")")
+        self._add_code("")
+
+    def _handle_sharepoint_writer(
+        self, settings: input_schema.NodeSharePointWriter, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        input_df = input_vars.get("main", "df")
+        prefix = f"{var_name} = " if self.placeholders else ""
+        self._add_code(f"{prefix}{input_df}.write_sharepoint(")
+        self._add_code(f"    {settings.connection_id!r},")
+        if settings.list_target is not None:
+            self._add_code(f"    list_target={settings.list_target.model_dump()!r},")
+        else:
+            self._add_code(f"    drive_id={settings.drive_id!r},")
+            self._add_code(f"    file_path={settings.file_path!r},")
+            self._add_code(f"    format={settings.format!r},")
+            self._add_code(f"    conflict_mode={settings.conflict_mode!r},")
+            if settings.sheet_name is not None:
+                self._add_code(f"    sheet_name={settings.sheet_name!r},")
+            if settings.write_when_empty:
+                self._add_code("    write_when_empty=True,")
+        if self.placeholders:
+            self._add_code(")")
+        else:
+            self._add_code(").collect()")
+            self._add_code(f"{var_name} = {input_df}")
+        self._add_code("")
+
     def _handle_cloud_storage_reader(
         self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: dict[str, str]
     ):

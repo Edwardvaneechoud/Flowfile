@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createApp, nextTick, reactive } from "vue";
+import readerIcon from "../../../features/designer/assets/icons/sharepoint_reader.svg?url";
+import writerIcon from "../../../features/designer/assets/icons/sharepoint_writer.svg?url";
 import NodeButton from "./nodeButton.vue";
 import type { PlacementPreview } from "../../../types";
 
@@ -32,16 +34,17 @@ vi.mock("../../../stores/column-store", () => ({
         : undefined,
   }),
 }));
-vi.mock("../../../composables/useCustomNodeIcon", () => ({ useNodeIconUrl: () => "icon.svg" }));
+vi.mock("../../../../config/constants", () => ({ flowfileCorebaseURL: "http://core/" }));
+vi.mock("../../../composables/useNodes", () => ({ fetchNodeTemplates: async () => [] }));
 
 let app: ReturnType<typeof createApp>;
 afterEach(() => app?.unmount());
 
-function mountNode() {
+function mountNode(imageSrc = "input_data.svg") {
   const host = document.createElement("div");
   app = createApp(NodeButton, {
     nodeId: 1,
-    imageSrc: "icon.svg",
+    imageSrc,
     title: "Input",
     nodeTitleInfo: { nodeId: 1, title: "Input" } as any,
   });
@@ -107,4 +110,12 @@ it("reactively clears the badge when cache knowledge is invalidated", async () =
   expect(host.querySelector('[aria-label="Cached result"]')).toBeNull();
   expect(host.querySelector("button.cached-node")).toBeNull();
   expect(host.querySelector(".status-indicator.success")).not.toBeNull();
+});
+
+
+it.each([
+  ["reader", readerIcon],
+  ["writer", writerIcon],
+])("renders the bundled SharePoint %s icon on the node", (role, assetUrl) => {
+  expect(mountNode(`sharepoint_${role}.svg`).querySelector("img")?.getAttribute("src")).toBe(assetUrl);
 });

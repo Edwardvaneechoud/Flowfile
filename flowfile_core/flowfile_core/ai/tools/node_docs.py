@@ -586,6 +586,15 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "wants GA4 metrics / dimensions inside the flow. Don't use for ad-platform "
         "data — those need their own connectors / 'external_source'."
     ),
+    "sharepoint_reader": (
+        "Read CSV, XLSX, XLS, Parquet, or JSON from a SharePoint document library, or read a SharePoint list, "
+        "using a saved connection. This source node has no upstream input. Library paths support wildcards; "
+        "incremental reads are available for individual CSV, JSON, and Parquet files."
+    ),
+    "sharepoint_writer": (
+        "Write upstream rows to a file in a SharePoint document library or append them to a SharePoint list "
+        "using a saved connection. The writer preserves the upstream schema."
+    ),
     "rest_api_reader": (
         "Read JSON from a REST API (optionally paginated) into the flow. Not for "
         "streaming (use 'kafka_source') or a source with a typed node (database / "
@@ -1191,6 +1200,18 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "metric=sessions, dimension=country. Pitfall: GA4 has hard rate "
         "limits — large date ranges with high-cardinality dimensions "
         "may be sampled."
+    ),
+    "sharepoint_reader": (
+        "Select a saved SharePoint connection, then choose a document-library file or a SharePoint list. "
+        "For files, use * or ? in the path to match multiple files. Set the CSV delimiter if needed. "
+        "For XLSX or XLS, optionally enter a sheet name (defaults to the first sheet). "
+        "Enable incremental reads only for a single CSV, JSON, or Parquet file without wildcards. "
+        "Turn off Cache Results (`cache_results: false`) when incremental reads are enabled."
+    ),
+    "sharepoint_writer": (
+        "Select a saved SharePoint connection. For a document library, choose an output path, format "
+        "(CSV, XLSX, or Parquet), and what to do if the file exists. For a list, map input columns to list "
+        "columns; running the flow appends rows, so rerunning it can create duplicates."
     ),
     "rest_api_reader": (
         "Settings: a Request ('Method', 'URL', optional 'Record path' to the records "

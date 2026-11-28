@@ -338,6 +338,8 @@ _BY_SETTINGS: dict[str, Callable[[Any], NodeRequirements]] = {
     "database_writer": _database_writer,
     "kafka_source": _kafka_source,
     "google_analytics_reader": _google_analytics_reader,
+    "sharepoint_reader": lambda _: NodeRequirements(operation=OperationKind.sharepoint_read),
+    "sharepoint_writer": lambda _: NodeRequirements(operation=OperationKind.sharepoint_write),
     "filter": _filter,
     "gate": _gate,
     "dynamic_rename": _dynamic_rename,

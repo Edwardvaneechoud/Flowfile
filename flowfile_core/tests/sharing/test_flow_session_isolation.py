@@ -35,6 +35,9 @@ EXEMPT_ROUTES = {
     ("POST", "/db_connection_lib"): "oauth_flow_id names a Snowflake sign-in, claimed only by its owner",
     ("PUT", "/db_connection_lib"): "oauth_flow_id names a Snowflake sign-in, claimed only by its owner",
     ("GET", "/snowflake/oauth/status/{flow_id}"): "a Snowflake sign-in id, answered only to its owner",
+    ("POST", "/sharepoint_connections/device/{flow_id}"): "a SharePoint device sign-in id, scoped to its owner",
+    ("DELETE", "/sharepoint_connections/device/{flow_id}"): "a SharePoint device sign-in id, scoped to its owner",
+    ("POST", "/sharepoint_connections/device/{flow_id}/save"): "a SharePoint device sign-in id, scoped to its owner",
 }
 EXEMPT_PREFIXES = {
     "/catalog/flows/{flow_id}": "a catalog registration id, authorized by the catalog AccessResolver",

@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     )
     from shared.iceberg_utils import IcebergTableRef
     from shared.kafka.models import KafkaReadSettings
+    from shared.sharepoint import SharePointReadSettings, SharePointWriteSettings
 
 PAYLOAD_KEY = "payload"
 """The one key of an operation's ``OpPayload``."""
@@ -120,6 +121,19 @@ class GoogleAnalyticsReadPayload(OperationPayload):
     encrypted_credential: str
     oauth_client_id: str | None = None
     oauth_client_secret_encrypted: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class SharePointReadPayload(OperationPayload):
+    """SharePoint source read or preview with an encrypted credential."""
+
+    settings: SharePointReadSettings
+
+
+@dataclass(frozen=True, kw_only=True)
+class SharePointWritePayload(OperationPayload):
+    settings: SharePointWriteSettings
+    plan: pl.LazyFrame
 
 
 @dataclass(frozen=True, kw_only=True)

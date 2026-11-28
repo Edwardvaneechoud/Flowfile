@@ -8,7 +8,12 @@ compatibility with fields a newer version may add.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from flowfile_core.project.secrets_resolver import placeholder_name
 
 
 class _Entry(BaseModel):
@@ -27,6 +32,23 @@ class DatabaseConnectionEntry(_Entry):
     auth_method: str | None = None
     role: str | None = None
     warehouse: str | None = None
+
+
+class SharePointConnectionEntry(_Entry):
+    connection_uuid: UUID
+    connection_name: str = Field(min_length=1, max_length=255)
+    tenant_id: UUID
+    client_id: UUID
+    auth_method: Literal["client_secret", "certificate"]
+    default_site_url: str | None = Field(default=None, max_length=2048)
+    credential: str
+
+    @field_validator("credential")
+    @classmethod
+    def require_reference(cls, value: str) -> str:
+        if placeholder_name(value) is None:
+            raise ValueError("Expected a secret reference")
+        return value
 
 
 class CloudConnectionEntry(_Entry):
