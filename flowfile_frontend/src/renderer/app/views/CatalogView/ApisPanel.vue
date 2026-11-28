@@ -4,6 +4,9 @@
       <el-radio-group v-model="view" size="small">
         <el-radio-button value="endpoints">Endpoints</el-radio-button>
         <el-radio-button value="consumers">Consumers</el-radio-button>
+        <el-radio-button value="delta-sharing" data-testid="apis-delta-sharing">
+          Delta Sharing
+        </el-radio-button>
       </el-radio-group>
     </div>
 
@@ -129,8 +132,8 @@
       </el-dialog>
     </div>
 
-    <!-- API consumers (service accounts) -->
-    <ApiConsumersPanel v-else />
+    <ApiConsumersPanel v-else-if="view === 'consumers'" />
+    <DeltaSharingPanel v-else />
   </div>
 </template>
 
@@ -142,14 +145,18 @@ import { flowfileCorebaseURL } from "../../../config/constants";
 import { FlowApiApi, type ApiEndpoint, type PublishableFlow } from "../../api/flowApi.api";
 import { EmptyState } from "../../components/common";
 import ApiConsumersPanel from "./ApiConsumersPanel.vue";
+import DeltaSharingPanel from "./DeltaSharingPanel.vue";
 
 const emit = defineEmits<{ (e: "view-flow", registrationId: number): void }>();
 
 const route = useRoute();
-// Deep-link support: ?apiView=consumers opens the Consumers sub-view directly
-// (used by a flow's API panel "Manage consumers" link).
-const view = ref<"endpoints" | "consumers">(
-  route.query.apiView === "consumers" ? "consumers" : "endpoints",
+// Deep link: ?apiView=consumers or ?apiView=delta-sharing opens that sub-view.
+const API_VIEWS = ["endpoints", "consumers", "delta-sharing"] as const;
+type ApiView = (typeof API_VIEWS)[number];
+const view = ref<ApiView>(
+  (API_VIEWS as readonly string[]).includes(String(route.query.apiView))
+    ? (route.query.apiView as ApiView)
+    : "endpoints",
 );
 
 const endpoints = ref<ApiEndpoint[]>([]);

@@ -431,6 +431,59 @@ class FlowApiKey(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
 
+class DeltaShare(Base):
+    """A Delta Sharing share: catalog tables served to outside tools over the Delta Sharing protocol.
+
+    ``name`` is what a recipient sees and addresses (``/delta-sharing/shares/{name}``). The owner may add only
+    tables they manage, and a table stops being served once its owner loses that right.
+    """
+
+    __tablename__ = "delta_shares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    uuid = Column(String, nullable=False, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class DeltaShareTable(Base):
+    """A catalog table in a share, under the schema and table names the recipient sees."""
+
+    __tablename__ = "delta_share_tables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    share_id = Column(Integer, ForeignKey("delta_shares.id", ondelete="CASCADE"), nullable=False, index=True)
+    table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False, index=True)
+    schema_name = Column(String, nullable=False)
+    table_name = Column(String, nullable=False)
+    share_history = Column(Boolean, nullable=False, default=True, server_default="1")
+    # The table's storage path when added: SQLite reuses rowids, so a mismatch means the table is gone.
+    table_path = Column(Text, nullable=True)
+    uuid = Column(String, nullable=False, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("share_id", "schema_name", "table_name", name="uq_delta_share_table_name"),
+        UniqueConstraint("share_id", "table_id", name="uq_delta_share_table_id"),
+    )
+
+
+class ApiConsumerDeltaShare(Base):
+    """Grant linking an ``ApiConsumer`` to a ``DeltaShare`` it may read."""
+
+    __tablename__ = "api_consumer_delta_shares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    consumer_id = Column(Integer, ForeignKey("api_consumers.id", ondelete="CASCADE"), nullable=False, index=True)
+    share_id = Column(Integer, ForeignKey("delta_shares.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("consumer_id", "share_id", name="uq_consumer_delta_share"),)
+
+
 class FlowSchedule(Base):
     """Defines a schedule for automatic flow execution."""
 

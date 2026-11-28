@@ -41,6 +41,7 @@ from flowfile_core.configs.settings import (
     SERVER_HOST,
     SERVER_PORT,
 )
+from flowfile_core.delta_sharing.errors import SharingError
 from flowfile_core.events import publish
 from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.kernel import router as kernel_router
@@ -59,6 +60,9 @@ from flowfile_core.routes.community_nodes import router as community_nodes_route
 from flowfile_core.routes.compute_backends import router as compute_backends_router
 from flowfile_core.routes.converters import router as converters_router
 from flowfile_core.routes.custom_node_mounts import router as custom_node_mounts_router
+from flowfile_core.routes.delta_sharing import manage_router as delta_sharing_manage_router
+from flowfile_core.routes.delta_sharing import protocol_router as delta_sharing_protocol_router
+from flowfile_core.routes.delta_sharing import sharing_error_response
 from flowfile_core.routes.external_catalogs import router as external_catalogs_router
 from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.flow_api import data_router as flow_api_data_router
@@ -257,6 +261,9 @@ app.include_router(search_router)
 app.include_router(flow_api_data_router)
 app.include_router(flow_api_management_router)
 app.include_router(api_consumers_router)
+app.include_router(delta_sharing_manage_router)
+app.include_router(delta_sharing_protocol_router)
+app.add_exception_handler(SharingError, sharing_error_response)
 app.include_router(artifacts_router)
 app.include_router(ml_router)
 app.include_router(logs_router, tags=["logs"])

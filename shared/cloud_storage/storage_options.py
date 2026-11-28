@@ -28,11 +28,13 @@ def build_s3_client(
     *,
     timeouts: tuple[float, float] | None = None,
     path_style: bool = False,
+    signature_version: str | None = None,
 ):
     """A boto3 S3 client from Polars-shaped storage options; only the keys boto3 understands are forwarded.
 
     *timeouts* is ``(connect, read)`` seconds and also caps retries at 2, for interactive listings.
     *path_style* addresses a custom endpoint path-style: S3-compatible stores do not serve virtual-hosted URLs.
+    *signature_version* (``"s3v4"``) is for presigned URLs, which botocore otherwise signs with SigV2.
     """
     import boto3
     from botocore.config import Config
@@ -56,6 +58,9 @@ def build_s3_client(
     if path_style and kwargs.get("endpoint_url"):
         path_config = Config(s3={"addressing_style": "path"})
         config = path_config if config is None else config.merge(path_config)
+    if signature_version:
+        signing = Config(signature_version=signature_version)
+        config = signing if config is None else config.merge(signing)
     return boto3.client("s3", config=config, **kwargs)
 
 

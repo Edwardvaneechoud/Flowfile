@@ -103,6 +103,17 @@
           </p>
         </section>
 
+        <section v-if="deltaShares.length" class="drawer-section">
+          <h3>Delta shares</h3>
+          <p class="muted">
+            Shares this consumer's keys may read over Delta Sharing (APIs → Delta Sharing).
+          </p>
+          <div v-for="share in deltaShares" :key="share.id" class="row">
+            <code class="code-chip">{{ share.name }}</code>
+            <span class="muted">{{ share.tables.length }} table(s)</span>
+          </div>
+        </section>
+
         <!-- Keys -->
         <section class="drawer-section">
           <div class="section-head">
@@ -162,6 +173,7 @@
 import { onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { ApiConsumersApi, type ApiConsumer } from "../../api/apiConsumers.api";
+import { DeltaSharingApi, type DeltaShare } from "../../api/deltaSharing.api";
 import type { ApiEndpoint, ApiKey } from "../../api/flowApi.api";
 import { formatDate } from "./catalog-formatters";
 
@@ -175,6 +187,7 @@ const drawerBusy = ref(false);
 const active = ref<ApiConsumer | null>(null);
 const availableEndpoints = ref<ApiEndpoint[]>([]);
 const grantedIds = ref<number[]>([]);
+const deltaShares = ref<DeltaShare[]>([]);
 const keys = ref<ApiKey[]>([]);
 const newKey = ref<string | null>(null);
 
@@ -244,7 +257,13 @@ async function openManage(row: ApiConsumer) {
   active.value = row;
   drawerOpen.value = true;
   newKey.value = null;
+  deltaShares.value = [];
   drawerBusy.value = true;
+  DeltaSharingApi.sharesOfConsumer(row.id)
+    .then((list) => {
+      if (active.value?.id === row.id) deltaShares.value = list;
+    })
+    .catch(() => undefined);
   try {
     const [available, granted, keyList] = await Promise.all([
       ApiConsumersApi.listAvailableEndpoints(row.id),

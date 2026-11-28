@@ -339,6 +339,16 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
         db_models.ApiConsumerEndpoint.endpoint_id.in_(endpoint_ids)
         | db_models.ApiConsumerEndpoint.consumer_id.in_(consumer_ids)
     ).delete(synchronize_session=False)
+    # Delta shares are served as their owner: the shares, their tables and every grant on them go too.
+    share_ids = db.query(db_models.DeltaShare.id).filter_by(owner_id=user_id)
+    db.query(db_models.ApiConsumerDeltaShare).filter(
+        db_models.ApiConsumerDeltaShare.share_id.in_(share_ids)
+        | db_models.ApiConsumerDeltaShare.consumer_id.in_(consumer_ids)
+    ).delete(synchronize_session=False)
+    db.query(db_models.DeltaShareTable).filter(db_models.DeltaShareTable.share_id.in_(share_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(db_models.DeltaShare).filter_by(owner_id=user_id).delete(synchronize_session=False)
     db.query(db_models.FlowApiKey).filter(
         (db_models.FlowApiKey.owner_id == user_id)
         | db_models.FlowApiKey.endpoint_id.in_(endpoint_ids)
