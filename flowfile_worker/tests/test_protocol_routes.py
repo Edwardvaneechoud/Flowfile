@@ -670,7 +670,7 @@ def test_import_under_a_held_id_replaces_it(held, tmp_path):
 def test_an_import_whose_catalog_cannot_be_read_is_the_500_of_a_failed_export(held, monkeypatch, tmp_path):
     import shared.database
 
-    def unreadable(connection_id):
+    def unreadable(connection_id, user_id):
         raise RuntimeError("the catalog is gone")
 
     monkeypatch.setattr(shared.database, "cloud_connection_record", unreadable)
@@ -688,6 +688,34 @@ def test_an_import_whose_catalog_cannot_be_read_is_the_500_of_a_failed_export(he
         "status": "Error",
         "error_message": "CredentialResolutionError: Could not read cloud connection 3 (user 1) from the catalog "
         "database: RuntimeError",
+        "error_kind": "task",
+    }
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+
+
+def test_an_import_naming_someone_the_connection_is_not_shared_with_is_refused(held, monkeypatch, tmp_path):
+    import sqlite3
+
+    from tests.test_plan_credentials import _CATALOG_DDL
+
+    database = tmp_path / "catalog.db"
+    with sqlite3.connect(database) as con:
+        con.executescript(_CATALOG_DDL)
+        con.execute(
+            "INSERT INTO cloud_storage_connections (id, connection_name, storage_type, auth_method, endpoint_url,"
+            " verify_ssl, user_id) VALUES (3, 'alice-s3', 's3', 'access_key', 'http://alice.example', 1, 1)"
+        )
+    monkeypatch.setenv("FLOWFILE_DATABASE_URL", f"sqlite:///{database}")
+    result_id = held()
+    body = {"uri": file_uri(tmp_path / "in.parquet"), "columns": [], "credential": {"connection_id": 3, "user_id": 2}}
+
+    response = client.post(f"/v1/results/{result_id}/import", json=body)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {
+        "status": "Error",
+        "error_message": "CredentialResolutionError: User 2 may not use cloud connection 3: it is not theirs, and no "
+        "group they are in was given it.",
         "error_kind": "task",
     }
     assert client.head(f"/v1/results/{result_id}").status_code == 404

@@ -34,7 +34,10 @@ CREATE TABLE cloud_storage_connections (
   aws_access_key_id TEXT, aws_secret_access_key_id INTEGER, aws_session_token_id INTEGER, aws_role_arn TEXT,
   aws_allow_unsafe_html BOOLEAN, aws_profile TEXT, azure_account_name TEXT, azure_account_key_id INTEGER,
   azure_tenant_id TEXT, azure_client_id TEXT, azure_client_secret_id INTEGER, azure_sas_token_id INTEGER,
-  gcs_service_account_key_id INTEGER, gcs_project_id TEXT, endpoint_url TEXT, verify_ssl BOOLEAN);
+  gcs_service_account_key_id INTEGER, gcs_project_id TEXT, endpoint_url TEXT, verify_ssl BOOLEAN, user_id INTEGER);
+CREATE TABLE user_group_memberships (id INTEGER PRIMARY KEY, group_id INTEGER, user_id INTEGER);
+CREATE TABLE resource_grants (
+  id INTEGER PRIMARY KEY, resource_type TEXT, resource_id INTEGER, group_id INTEGER, permission TEXT);
 """
 
 
@@ -100,25 +103,23 @@ def test_worker_collects_a_plan_whose_credentials_are_encrypted(monkeypatch, wor
         client.delete_object(Bucket=_BUCKET, Key=path.removeprefix(f"s3://{_BUCKET}/"))
 
 
-@pytest.mark.worker
-@pytest.mark.skipif(not _minio_available(), reason="MinIO mock S3 not available")
-def test_a_fresh_worker_process_resolves_a_connection_reference(tmp_path):
-    """A spawned child reads the connection from its catalog and decrypts it with the worker's own master key."""
+def _collect_in_a_fresh_worker_process(tmp_path, user_id: int) -> subprocess.CompletedProcess:
+    """Collect a MinIO scan whose plan names user 7's stored connection 3 for *user_id*, in a spawned child."""
     database = tmp_path / "catalog.db"
     with sqlite3.connect(database) as con:
         con.executescript(_CATALOG_DDL)
         con.execute("INSERT INTO secrets VALUES (1, ?)", (encrypt_secret(MINIO_SECRET_KEY, user_id=7),))
         con.execute(
             "INSERT INTO cloud_storage_connections (id, storage_type, auth_method, aws_region, aws_access_key_id,"
-            " aws_secret_access_key_id, aws_allow_unsafe_html, endpoint_url, verify_ssl)"
-            " VALUES (3, 's3', 'access_key', 'us-east-1', ?, 1, 1, ?, 1)",
+            " aws_secret_access_key_id, aws_allow_unsafe_html, endpoint_url, verify_ssl, user_id)"
+            " VALUES (3, 's3', 'access_key', 'us-east-1', ?, 1, 1, ?, 1, 7)",
             (MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL),
         )
     path = f"s3://{_BUCKET}/worker-plan-credentials-{uuid.uuid4().hex[:8]}/data.parquet"
     credentials = {"aws_access_key_id": MINIO_ACCESS_KEY, "aws_secret_access_key": MINIO_SECRET_KEY}
     pl.DataFrame({"a": [1, 2, 3]}).write_parquet(path, storage_options={**_NON_SECRET, **credentials})
     plan_file = tmp_path / "plan.bin"
-    provider = CredentialRefProvider(3, 7)
+    provider = CredentialRefProvider(3, user_id)
     plan_file.write_bytes(pl.scan_parquet(path, storage_options=_NON_SECRET, credential_provider=provider).serialize())
     assert MINIO_SECRET_KEY.encode() not in plan_file.read_bytes()
     code = (
@@ -128,8 +129,29 @@ def test_a_fresh_worker_process_resolves_a_connection_reference(tmp_path):
     env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
     env.update(AWS_EC2_METADATA_DISABLED="true", FLOWFILE_DATABASE_URL=f"sqlite:///{database}", TEST_MODE="1")
     try:
-        ran = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120)
-        assert ran.returncode == 0, ran.stderr
-        assert ran.stdout.strip().splitlines()[-1] == "3"
+        return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120)
     finally:
         get_minio_client().delete_object(Bucket=_BUCKET, Key=path.removeprefix(f"s3://{_BUCKET}/"))
+
+
+@pytest.mark.worker
+@pytest.mark.skipif(not _minio_available(), reason="MinIO mock S3 not available")
+def test_a_fresh_worker_process_resolves_a_connection_reference(tmp_path):
+    """A spawned child reads the connection from its catalog and decrypts it with the worker's own master key."""
+    ran = _collect_in_a_fresh_worker_process(tmp_path, user_id=7)
+
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.strip().splitlines()[-1] == "3"
+
+
+@pytest.mark.worker
+@pytest.mark.skipif(not _minio_available(), reason="MinIO mock S3 not available")
+def test_a_fresh_worker_process_refuses_a_reference_for_someone_the_connection_is_not_shared_with(tmp_path):
+    """The child reads who may use the connection with it, so a plan naming another person reads nothing."""
+    ran = _collect_in_a_fresh_worker_process(tmp_path, user_id=8)
+
+    assert ran.returncode != 0
+    assert "User 8 may not use cloud connection 3: it is not theirs, and no group they are in was given it." in (
+        ran.stderr
+    )
+    assert MINIO_SECRET_KEY not in ran.stderr

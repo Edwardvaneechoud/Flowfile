@@ -25,6 +25,7 @@ from flowfile_core.flowfile.flow_graph import (
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.routes import storage_browser
 from flowfile_core.schemas import input_schema, schemas
+from shared.cloud_credential_provider import CredentialResolutionError
 from shared.cloud_storage.utils import validate_cloud_resource_path
 from test_utils.s3.aws_profiles import isolate_aws
 
@@ -137,7 +138,7 @@ def _error_of(run_info, node_id: int) -> str:
     return step.error
 
 
-def _share(client, resource_id: int, group_id: int):
+def _share(client, resource_id: int, group_id: int) -> int:
     response = client.post(
         "/shares",
         json={
@@ -148,6 +149,7 @@ def _share(client, resource_id: int, group_id: int):
         },
     )
     assert response.status_code == 200, response.text
+    return response.json()["id"]
 
 
 @pytest.fixture
@@ -365,6 +367,26 @@ class TestSavedConnectionsStillWork:
             listed = client.list_objects_v2(Bucket="flowfile-test", Prefix=f"{prefix}/")
             for obj in listed.get("Contents", []):
                 client.delete_object(Bucket="flowfile-test", Key=obj["Key"])
+
+    def test_the_reference_minted_for_a_grantee_stops_resolving_once_the_share_is_removed(
+        self, users, client_for, alice_minio, team, ambient_probe
+    ):
+        """A plan names the connection by id; whoever runs it asks whether bob may use it, not only core at minting."""
+        grant = _share(client_for("alice"), alice_minio, team)
+        connection = get_cloud_connection_settings(CONNECTION, users["bob"].id, "auto", resource_path=S3_PATH)
+        _, provider = CloudStorageReader.get_read_credentials(connection, users["bob"].id)
+        assert (provider.connection_id, provider.user_id) == (alice_minio, users["bob"].id)
+        assert provider()[0]["aws_access_key_id"] == "minioadmin"
+
+        assert client_for("alice").delete(f"/shares/{grant}").status_code == 204
+
+        with pytest.raises(CredentialResolutionError) as refused:
+            provider()
+        assert str(refused.value) == (
+            f"User {users['bob'].id} may not use cloud connection {alice_minio}: it is not theirs, and no group they "
+            "are in was given it."
+        )
+        assert ambient_probe == []
 
 
 SERVER_IDENTITY = "authenticates with this server's own credentials"

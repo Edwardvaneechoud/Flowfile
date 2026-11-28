@@ -11,7 +11,8 @@ module pins it: the number and one sha256 per entry. An entry is one of:
 - ``operation <kind>``: a ``POST /v1/ops/<kind>`` route, and ``operation task:<type>`` the keyword parameters of the
   task function a legacy submit dispatches by its operation type, minus those the worker fills in itself, with the
   shape of each model a parameter is annotated with and of each report the task answers (``TASK_RESULTS``).
-- ``catalog cloud_storage_connections``: the columns ``shared.database.cloud_connection_record`` reads from the catalog.
+- ``catalog cloud_storage_connections``: the columns ``shared.database.cloud_connection_record`` reads from the catalog,
+  those that decide who may use the connection included.
 
 Descriptions, summaries, titles and operation ids are not shape and are left out. A changed or removed entry, or a new
 entry that is no operation, fails until ``PROTOCOL_VERSION`` is bumped and the pin rewritten
@@ -156,10 +157,13 @@ def _task_operations() -> dict[str, dict]:
 def _catalog() -> dict[str, dict]:
     from shared import database
 
+    access = {table: list(columns) for table, columns in database._CLOUD_CONNECTION_ACCESS.items()}
     return {
         "catalog cloud_storage_connections": {
+            **access,
             "cloud_storage_connections": [*database._CLOUD_CONNECTION_FIELDS]
-            + [f"{name}_id" for name in database._CLOUD_CONNECTION_SECRETS],
+            + [f"{name}_id" for name in database._CLOUD_CONNECTION_SECRETS]
+            + access["cloud_storage_connections"],
             "secrets": ["id", "encrypted_value"],
         }
     }
