@@ -67,6 +67,21 @@ def check_semantic_joins(namespace_id: int, service: Service):
     return service.check_joins(namespace_id)
 
 
+@router.post(f"{_BASE}/data-rules/run", response_model=s.DataRulesRunOut)
+@handle_catalog_exceptions()
+def run_semantic_data_rules(namespace_id: int, service: Service, body: s.DataRulesRunIn | None = None):
+    """Run the accepted data rules of the model's tables, or of the tables named, on the compute backend: one plan
+    per table. Reading rights suffice. Answers 503 when compute cannot be reached."""
+    return service.run_data_rules(namespace_id, body.table_ids if body else None)
+
+
+@router.get(f"{_BASE}/data-rules/results", response_model=list[s.DataRuleTableOut])
+@handle_catalog_exceptions()
+def get_semantic_data_rule_results(namespace_id: int, service: Service):
+    """Each table's newest run of its data rules, for the rules accepted now."""
+    return service.data_rule_results(namespace_id)
+
+
 @router.get(f"{_BASE}/joins/dependents", response_model=list[s.JoinDependentOut])
 @handle_catalog_exceptions()
 def get_semantic_join_dependents(

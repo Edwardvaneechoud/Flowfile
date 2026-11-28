@@ -128,6 +128,8 @@ SCHEMA_ROUTES = [
     ("put", "", {"description": "x"}),
     ("post", "/proposals", {"proposals": []}),
     ("post", "/joins/check", None),
+    ("post", "/data-rules/run", None),
+    ("get", "/data-rules/results", None),
     ("get", "/joins/dependents?key=relationship:x::y", None),
     ("get", "/review", None),
     ("post", "/review", {"action": "accept", "ids": ["x"]}),
@@ -613,3 +615,47 @@ def test_a_join_name_a_hidden_join_holds_is_not_taken_over(users, client_for, pu
     for subject in (public.lines_to_orders, f"relationship:{world.catalog}.sales::bob_lines_bob_orders"):
         held = host.host().gloss.store.find(Query(subject=subject))
         assert {a.source for a in held} == {f"human:{users['alice'].id}"}, f"a suggestion was stored on {subject}"
+
+
+def test_data_rules_run_and_answer_only_for_tables_the_reader_may_open(users, client_for, public, monkeypatch):
+    """A queued rule does not run, a reader's run scans none of the tables hidden from them, and the results of a
+    hidden table's rules, whoever ran them, are not answered to that reader."""
+    world, bob, admin = public.world, client_for("bob"), client_for("admin")
+    say(world.field("orders", "amount"), "checks", [{"check": "between", "max": 8}], user_id=users["alice"].id)
+    scanned: list[int] = []
+    real = CatalogService.stored_table_plan
+
+    def record(self, table_id, user_id, backend=None):
+        scanned.append(table_id)
+        return real(self, table_id, user_id, backend)
+
+    monkeypatch.setattr(CatalogService, "stored_table_plan", record)
+    run, results = f"{_base(world.sales_id)}/data-rules/run", f"{_base(world.sales_id)}/data-rules/results"
+    rule = {
+        "kind": "field",
+        "table_id": public.bob_orders,
+        "column": "total",
+        "attribute": "checks",
+        "value": [{"check": "between", "max": 7}],
+    }
+    stored = bob.post(f"{_base(world.sales_id)}/proposals", json={"proposals": [rule]})
+    assert stored.status_code == 200 and stored.json()[0]["status"] == "proposed", stored.text
+    waiting = bob.post(run)
+    assert waiting.status_code == 200 and waiting.json() == {"run_id": None, "tables": []}, waiting.text
+    assert scanned == []
+
+    _accept_all(admin, world.sales_id)
+    ran = bob.post(run)
+    assert ran.status_code == 200, ran.text
+    [table] = ran.json()["tables"]
+    [result] = table["results"]
+    assert (table["table_id"], result["failed_rows"], result["total_rows"]) == (public.bob_orders, 1, 3)
+    assert scanned == [public.bob_orders]
+
+    everything = admin.post(run)
+    assert everything.status_code == 200, everything.text
+    assert {t["table_id"] for t in everything.json()["tables"]} == {world.orders_id, public.bob_orders}
+    assert {t["table_id"] for t in admin.get(results).json()} == {world.orders_id, public.bob_orders}
+    assert [t["table_id"] for t in bob.get(results).json()] == [public.bob_orders]
+    hidden = bob.post(run, json={"table_ids": [world.orders_id]})
+    assert hidden.status_code == 422, hidden.text

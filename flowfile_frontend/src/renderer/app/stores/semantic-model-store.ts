@@ -4,7 +4,11 @@ import { ref } from "vue";
 import { SemanticModelApi } from "../api/semanticModel.api";
 import { errorText } from "../types/semantic.types";
 import { useCatalogStore } from "./catalog-store";
+import { ruleKey } from "../views/CatalogView/semantic/dataRules";
 import type {
+  DataRuleResult,
+  DataRuleTable,
+  DataRulesRun,
   JoinCheck,
   SemanticFact,
   SemanticModel,
@@ -29,8 +33,13 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   const focusTableId = ref<number | null>(null);
   // Each join measured against the data, by join key; filled by checkJoins, empty until it answers.
   const joinChecks = ref<Record<string, JoinCheck>>({});
+  // What each table's last run of its data rules found, by table id then `ruleKey`.
+  const ruleResults = ref<Record<number, Record<string, DataRuleResult>>>({});
+  // The tables whose rules are being run now.
+  const rulesRunning = ref<number[]>([]);
 
   let loadToken = 0;
+  let rulesRuns = 0;
   let joinCheckRunning = false;
   let joinCheckAgain = false;
 
@@ -54,6 +63,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
       model.value = null;
       reviewQueue.value = [];
       joinChecks.value = {};
+      ruleResults.value = {};
     }
     namespaceId.value = id;
     loading.value = true;
@@ -166,6 +176,42 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     }
   }
 
+  const keyed = (table: DataRuleTable) =>
+    Object.fromEntries(table.results.map((r) => [ruleKey(r.column, r.rule), r]));
+
+  /** The last results of the model's data rules; a failed read leaves the rules unmarked. */
+  async function loadRuleResults() {
+    const id = namespaceId.value;
+    if (id === null) return;
+    const runsBefore = rulesRuns;
+    try {
+      const tables = await SemanticModelApi.getDataRuleResults(id);
+      // a run that answered meanwhile is newer than what was read
+      if (namespaceId.value !== id || rulesRuns !== runsBefore) return;
+      ruleResults.value = Object.fromEntries(tables.map((t) => [t.table_id, keyed(t)]));
+    } catch {
+      // the rules then show without a result
+    }
+  }
+
+  /** Run the accepted data rules of `tableIds` and keep what each table answered. */
+  async function runDataRules(tableIds: number[]): Promise<DataRulesRun> {
+    const id = openId();
+    rulesRunning.value = [...rulesRunning.value, ...tableIds];
+    try {
+      const run = await SemanticModelApi.runDataRules(id, tableIds);
+      rulesRuns += 1;
+      if (namespaceId.value === id) {
+        const next = { ...ruleResults.value };
+        for (const table of run.tables) if (!table.skipped) next[table.table_id] = keyed(table);
+        ruleResults.value = next;
+      }
+      return run;
+    } finally {
+      rulesRunning.value = rulesRunning.value.filter((t) => !tableIds.includes(t));
+    }
+  }
+
   return {
     namespaceId,
     model,
@@ -177,6 +223,10 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     focusTableId,
     joinChecks,
     checkJoins,
+    ruleResults,
+    rulesRunning,
+    loadRuleResults,
+    runDataRules,
     load,
     updateModel,
     propose,

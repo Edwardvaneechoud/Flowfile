@@ -1900,14 +1900,14 @@ test = ["basedpyright (==1.39.9) ; python_version >= \"3.9\" and sys_platform !=
 
 [[package]]
 name = "glosslayer"
-version = "0.2.0"
+version = "0.2.2"
 description = "A catalog-agnostic semantic layer: track, review, visualize and serve Apache Ossie semantic models."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "glosslayer-0.2.0-py3-none-any.whl", hash = "sha256:cc316c4e3e8028a96f8ee78217098edf66f7e468c7c4b8c5f1799f75e40d5ad2"},
-    {file = "glosslayer-0.2.0.tar.gz", hash = "sha256:7f0a0d1c5e4512b4ee9f4784f4ca5e5974ccb080b4a5c6aa44535a910be7e923"},
+    {file = "glosslayer-0.2.2-py3-none-any.whl", hash = "sha256:2875d1012633ae3b1122155c22174fff12e29883c5ef37dcd7e8a2a6f3bb2ac6"},
+    {file = "glosslayer-0.2.2.tar.gz", hash = "sha256:1f609065c8b4ac322780161a8fd6aac23f4d18a0bc677e33379611fa14a5749f"},
 ]
 
 [package.dependencies]
@@ -1925,14 +1925,14 @@ validate = ["jsonschema (>=4.18)"]
 
 [[package]]
 name = "glosslayer-flowfile"
-version = "0.2.0"
+version = "0.2.2"
 description = "Gloss plugin for the Flowfile catalog: catalog seam plus lineage-based proposals."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "glosslayer_flowfile-0.2.0-py3-none-any.whl", hash = "sha256:14c6ddb3bdcf1d5c45f80e108d539e4331caef147c60f1eeb6c2f809333fa09f"},
-    {file = "glosslayer_flowfile-0.2.0.tar.gz", hash = "sha256:5840ee2a5e5b3f32d439365e90ee02c05d14f4bc39749c842936d45406c05e0e"},
+    {file = "glosslayer_flowfile-0.2.2-py3-none-any.whl", hash = "sha256:f36d8ea04d248f995a29bc8b6e8ad00dc5a2c1af0c434aaaaaa7e8d02396b7cd"},
+    {file = "glosslayer_flowfile-0.2.2.tar.gz", hash = "sha256:538f316fb8798f1537566668af294c123d498f97c5e62f9b362e1f85e6e3f2b6"},
 ]
 
 [package.dependencies]
@@ -7131,4 +7131,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "3c0182b3af1e527fb6a44938d0e10895493727f220cb6f58ca8c3c8dd143241d"
+content-hash = "cb18d9dcf90eb5dd296a492dcf9e571aca140853bf65ae1f7bf2dae0b223b2ba"

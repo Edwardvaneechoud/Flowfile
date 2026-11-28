@@ -1,6 +1,8 @@
 // Semantic model API: one function per route of routes/catalog_semantic.py (no trailing slashes)
 import axios from "../services/axios.config";
 import type {
+  DataRuleTable,
+  DataRulesRun,
   JoinCheck,
   JoinDependent,
   MetricQuery,
@@ -38,6 +40,9 @@ export const SemanticModelApi = {
   propose: (id: number, proposals: SemanticProposal[]) =>
     post<SemanticFact[]>(url(id, "/proposals"), { proposals }),
   checkJoins: (id: number) => post<JoinCheck[]>(url(id, "/joins/check")),
+  runDataRules: (id: number, tableIds?: number[]) =>
+    post<DataRulesRun>(url(id, "/data-rules/run"), tableIds && { table_ids: tableIds }),
+  getDataRuleResults: (id: number) => get<DataRuleTable[]>(url(id, "/data-rules/results")),
   joinDependents: (id: number, key: string) =>
     get<JoinDependent[]>(url(id, "/joins/dependents"), { params: { key } }),
   getReviewQueue: (id: number) => get<SemanticReviewItem[]>(url(id, "/review")),

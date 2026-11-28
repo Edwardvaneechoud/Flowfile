@@ -16,6 +16,7 @@ import polars as pl
 from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
+from flowfile_core.catalog.compute import reads_core_disk
 from flowfile_core.catalog.constants import KEPT_ELSEWHERE_FORMAT, QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import get_live_delta_version, is_delta_table
 from flowfile_core.catalog.exceptions import (
@@ -59,7 +60,7 @@ from shared.storage_config import require_flow_in_storage, storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.services.sql import SqlService
-    from flowfile_core.flowfile.execution.protocol import ResultRef
+    from flowfile_core.flowfile.execution.protocol import ComputeBackend, ResultRef
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,37 @@ def scan_object_storage_table(
             "read it with."
         )
     return scan_delta(target, table.file_path, user_id)
+
+
+def stored_table_scan(
+    table: CatalogTable | CatalogTableOut, user_id: int | None, backend: ComputeBackend | None = None
+) -> pl.LazyFrame:
+    """A lazy scan of the rows a stored table holds, wherever they are, for ``backend`` to run; nothing is read here
+    (Polars opens a Delta log where the plan is collected).
+
+    A table on this server's disk is refused for a ``backend`` that does not read it (``compute.reads_core_disk``):
+    a worker on another host reads catalog tables from object storage only.
+
+    Raises:
+        ValueError: The table is virtual, so reading it would run what produces it; it names no stored data; or it
+            is on local disk and ``backend`` does not read this server's files.
+        ComputeError: ``backend`` had to be asked what it reads and did not answer.
+    """
+    if table.table_type == "virtual":
+        raise ValueError(f"Table '{table.name}' is virtual: it holds no stored rows")
+    if not table.file_path:
+        raise ValueError(f"Table '{table.name}' names no stored data")
+    if _is_cloud_uri(table.file_path):
+        [target] = row_targets([table], user_id, "read")
+        return scan_object_storage_table(table, target, user_id, table.name)
+    if backend is not None and not reads_core_disk(backend):
+        raise ValueError(
+            f"Table '{table.name}' is on local disk, not object storage, and backend \"{backend.id}\" does not read "
+            "this server's files"
+        )
+    if is_delta_table(Path(table.file_path)):
+        return pl.scan_delta(table.file_path)
+    return pl.scan_parquet(table.file_path)
 
 
 def _lazy_writer_input(table_name: str, writer_node: FlowNode) -> pl.LazyFrame:

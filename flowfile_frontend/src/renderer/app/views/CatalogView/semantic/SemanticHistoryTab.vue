@@ -24,12 +24,12 @@
         <div class="event-body">
           <div class="event-line">
             <strong>{{ EVENT_LABELS[event.type] ?? event.type }}</strong>
-            <span v-if="event.attribute" class="attr">{{ event.attribute }}</span>
+            <span v-if="event.attribute" class="attr">{{ attributeLabel(event.attribute) }}</span>
             <span class="actor">by {{ event.actor }}</span>
             <time class="when">{{ new Date(event.ts).toLocaleString() }}</time>
           </div>
           <p v-if="event.value !== null && event.value !== undefined" class="event-value">
-            {{ valueText(event.value) }}
+            {{ displayValue(event.attribute ?? "", event.value) }}
           </p>
           <p v-if="event.comment" class="note event-comment">{{ event.comment }}</p>
         </div>
@@ -42,7 +42,7 @@
 import { computed, ref } from "vue";
 import { SemanticModelApi } from "../../../api/semanticModel.api";
 import { errorText, type SemanticEvent, type SemanticModel } from "../../../types/semantic.types";
-import { valueText } from "./semanticFormat";
+import { attributeLabel, displayValue } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
 const subject = ref("");

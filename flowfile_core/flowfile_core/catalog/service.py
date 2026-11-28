@@ -40,6 +40,7 @@ from flowfile_core.catalog.repository import CatalogRepository
 if TYPE_CHECKING:
     from flowfile_core.catalog.access import AccessResolver
     from flowfile_core.catalog.storage_backend import CatalogStorageTarget
+    from flowfile_core.flowfile.execution.protocol import ComputeBackend
 from flowfile_core.catalog.serializers import (
     VizEnrichment,
     format_pyarrow_preview,
@@ -61,7 +62,7 @@ from flowfile_core.catalog.services.tables import (
     TableService,
 )
 from flowfile_core.catalog.services.virtual_tables import _UNSET as _VERSIONS_UNSET
-from flowfile_core.catalog.services.virtual_tables import VirtualTableService
+from flowfile_core.catalog.services.virtual_tables import VirtualTableService, stored_table_scan
 from flowfile_core.catalog.services.visualizations import VisualizationService
 from flowfile_core.catalog.table_sources import remote_of, table_row
 
@@ -1812,6 +1813,19 @@ class CatalogService:
         """Return distinct values plus min/max for a single column on a catalog table."""
         self._require_use("catalog_table", table_id)
         return self._visualizations.get_table_column_stats(table_id, column, limit, user_id)
+
+    def stored_table_plan(
+        self, table_id: int, user_id: int | None, backend: ComputeBackend | None = None
+    ) -> pl.LazyFrame:
+        """A lazy scan of a stored table's rows for a caller who may use it; a plan to send to ``backend``.
+
+        Raises:
+            ValueError: The table is virtual, names no stored data, or is on local disk while ``backend`` does not
+                read this server's files.
+            ComputeError: ``backend`` had to be asked what it reads and did not answer.
+        """
+        self._require_use("catalog_table", table_id)
+        return stored_table_scan(table_row(self.repo, table_id, user_id), user_id, backend)
 
 
 # Backward-compatible re-export under the underscore name.

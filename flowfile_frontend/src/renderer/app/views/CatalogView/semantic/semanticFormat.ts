@@ -4,6 +4,7 @@ import type {
   SemanticFactStatus,
   SemanticSourceKind,
 } from "../../../types/semantic.types";
+import { describeRules } from "./dataRules";
 
 /** The catalog page of a table (the same location CatalogView pushes when a table is selected). */
 export const tablePageLocation = (tableId: number) => ({
@@ -43,11 +44,14 @@ export const ROLE_HELP =
   "How this column is used when you ask for a number: an identifier is counted, " +
   "an amount is added up, a date gives a trend, and a group-by column splits the result.";
 
-export const attributeLabel = (attribute: string): string =>
-  attribute === "role" ? "used as" : attribute;
+const ATTRIBUTE_LABELS: Record<string, string> = { role: "used as", checks: "data rules" };
 
-/** A fact's value as a person reads it: a role by its label, anything else as text. */
+export const attributeLabel = (attribute: string): string =>
+  ATTRIBUTE_LABELS[attribute] ?? attribute;
+
+/** A fact's value as a person reads it: a role by its label, data rules as words, anything else as text. */
 export const displayValue = (attribute: string, value: unknown): string => {
+  if (attribute === "checks") return describeRules(value);
   if (attribute === "role") {
     const option = ROLE_OPTIONS.find((o) => o.value === value);
     if (option) return option.label;
@@ -113,6 +117,16 @@ export const shortName = (key: string): string => key.slice(key.lastIndexOf(".")
  */
 export function tableOutsideSchema(tables: string[] | undefined, schemaKey: string): string | null {
   return (tables ?? []).find((key) => !key.startsWith(`${schemaKey}.`)) ?? null;
+}
+
+/** Say that data rules were stored without their check (core marks the fact's rationale); nothing otherwise. */
+export function noteUncheckedRules(facts: SemanticFact[]) {
+  const unchecked = facts.some(
+    (f) => f.attribute === "checks" && f.rationale?.startsWith("Not checked"),
+  );
+  if (unchecked)
+    ElMessage.warning("Saved, but the rule could not be checked now. It is judged when it runs.");
+  return unchecked;
 }
 
 /** Say that a stored proposal waits for a person; nothing when all of it was accepted at once. */
